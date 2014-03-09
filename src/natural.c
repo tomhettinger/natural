@@ -29,10 +29,14 @@ static Layer *sun_layer;
 static BitmapLayer *black_sun_layer, *white_sun_layer;
 static GBitmap *black_sun_image, *white_sun_image;
 
-static TextLayer *time_text_layer;
+static TextLayer *time_text_layer, *sunrise_text_layer, *sunset_text_layer;
 char buffer[] = "00:00";
+char sunset_buffer[32], sunrise_buffer[32], time_buffer[32];
 
-
+enum {
+  KEY_SUNRISE = 0,
+  KEY_SUNSET = 1,
+};
 
 
 //static void get_daypath_info(double lat, double lon) {
@@ -47,13 +51,16 @@ char buffer[] = "00:00";
 //}
 
 
+static TextLayer* init_text_layer(GRect location, GColor color, GColor background, const char *res_id, GTextAlignment alignment) {
+  // Helper function used to initialize any text layer.
+  TextLayer *layer = text_layer_create(location);
+  text_layer_set_text_color(layer, color);
+  text_layer_set_background_color(layer, background);
+  text_layer_set_font(layer, fonts_get_system_font(res_id));
+  text_layer_set_text_alignment(layer, alignment);
+  return layer;
+}
 
-
-//static void sun_update_proc(Layer *layer, GContext *ctx) {
-//  // Update the contents of the sun layer.
-//  // no update needed?
-//  int x = 4;
-//}
 
 static void daylight_update_proc(Layer *layer, GContext *ctx) {
   // Ask for sunrise, sunset times.
@@ -87,6 +94,54 @@ static void minute_tick_handler(struct tm *tick_time, TimeUnits units_changed) {
   layer_set_frame(sun_layer, GRect(sunLocation.x, sunLocation.y, sunDiameter, sunDiameter));
 
   layer_mark_dirty(window_get_root_layer(window));
+}
+
+
+void process_tuple(Tuple *t) {
+  // Get key
+  int key = t->key;
+
+  // Get int value if present
+  int value = t->value->int32;
+
+  // Get string value if present
+  char string_value[32];
+  strcpy(string_value, t->value->cstring);
+
+  // Decide what to do
+  switch(key) {
+    case KEY_SUNRISE: ;
+      time_t tempA = (time_t) value + (TIMEZONE * 3600);  // workaround until localtime() works.
+      struct tm *sunrise_time = localtime(&tempA);  // localtime not yet implemented. Returns GMT.
+      strftime(sunrise_buffer, sizeof("00:00"), "%H:%M", sunrise_time);
+      //snprintf(sunrise_buffer, sizeof("0123456789"), "%d", value);
+      text_layer_set_text(sunrise_text_layer, (char*) &sunrise_buffer);
+      break;
+    case KEY_SUNSET: ;
+      time_t tempB = (time_t) value + (TIMEZONE * 3600);  // workaround until localtime() works.
+      struct tm *sunset_time = localtime(&tempB);  // localtime not yet implemented. Returns GMT.
+      strftime(sunset_buffer, sizeof("00:00"), "%H:%M", sunset_time);
+      //snprintf(sunset_buffer, sizeof("0123456789"), "%d", value);
+      text_layer_set_text(sunset_text_layer, (char*) &sunset_buffer);
+      break;
+  }
+}
+
+
+static void in_received_handler(DictionaryIterator *iter, void *context) {
+  // This will handle the information handed to the Pebble from the phone's PebbleApp.
+  // Get data.
+  Tuple *t = dict_read_first(iter);
+  if(t) {
+    process_tuple(t);
+  }
+  // Get next.
+  while (t != NULL) {
+    t = dict_read_next(iter);
+    if(t) {
+      process_tuple(t);
+    }
+  }
 }
 
 
@@ -137,18 +192,21 @@ static void window_load(Window *window) {
   layer_add_child(sun_layer, bitmap_layer_get_layer(white_sun_layer));
 
   // Create the text layer to hold the current time.
-  time_text_layer = text_layer_create(GRect(4, 150, 40, 14));
-  text_layer_set_background_color(time_text_layer, GColorClear);
-  text_layer_set_text_color(time_text_layer, GColorWhite);
-  text_layer_set_text_alignment(time_text_layer, GTextAlignmentLeft);
-  text_layer_set_font(time_text_layer, fonts_get_system_font(FONT_KEY_GOTHIC_14_BOLD));
+  time_text_layer = init_text_layer(GRect(0, 148, 40, 14), GColorWhite, GColorClear, "FONT_KEY_GOTHIC_24_BOLD", GTextAlignmentCenter);
+  text_layer_set_text(time_text_layer, "00:00");
   layer_add_child(window_layer, (Layer*) time_text_layer);
+  
+  // Create the text layers to hold the sunrise and sunset times.
+  sunrise_text_layer = init_text_layer(GRect(104, 6, 40, 14), GColorWhite, GColorClear, "FONT_KEY_GOTHIC_24_BOLD", GTextAlignmentCenter);
+  text_layer_set_text(sunrise_text_layer, "00:00");
+  layer_add_child(window_layer, (Layer*) sunrise_text_layer);
+  sunset_text_layer = init_text_layer(GRect(104, 148, 40, 14), GColorWhite, GColorClear, "FONT_KEY_GOTHIC_24_BOLD", GTextAlignmentCenter);
+  text_layer_set_text(sunset_text_layer, "00:00");
+  layer_add_child(window_layer, (Layer*) sunset_text_layer);
 
   // Execute the minute handler on window load.
-  struct tm *t;
-  time_t temp;
-  temp = time(NULL);
-  t = localtime(&temp);
+  time_t temp = time(NULL);
+  struct tm *t = localtime(&temp);
   minute_tick_handler(t, MINUTE_UNIT);
 }
 
@@ -156,6 +214,8 @@ static void window_load(Window *window) {
 static void window_unload(Window *window) {
   // Destroy TextLayers.
   text_layer_destroy(time_text_layer);
+  text_layer_destroy(sunrise_text_layer);
+  text_layer_destroy(sunset_text_layer);
 
   // Destroy GBitmaps.
   gbitmap_destroy(white_sun_image);
@@ -183,13 +243,18 @@ static void init(void) {
     .load = window_load,
     .unload = window_unload,
   });
-  window_stack_push(window, true);
 
   // Initialize GPath for daylight (currently a constant shape).
   daylight_path = gpath_create(&DAYLIGHT_POINTS);
 
+  // Register AppMessage events.
+  app_message_register_inbox_received(in_received_handler);
+  app_message_open(512, 512);  // Large input and output buffer sizes
+
   // Subscribe to 'minute' events.
   tick_timer_service_subscribe(MINUTE_UNIT, (TickHandler) minute_tick_handler);
+
+  window_stack_push(window, true);
 }
 
 

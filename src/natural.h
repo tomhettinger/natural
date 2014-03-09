@@ -1,7 +1,5 @@
-#pragma once
 #include <pebble.h>
-#define CLOCK_RADIUS 71.5
-
+//#define CLOCK_RADIUS 71.5
 //static GPoint CLOCK_CENTER = GPoint(72, 84);
 //static const GSize SUN_SIZE = GSize(19, 19);
 

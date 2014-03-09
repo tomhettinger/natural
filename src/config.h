@@ -1,4 +1,3 @@
-#pragma once
-
-#define LAT 38.7601
-#define LON -90.7559
+#define LAT 42.7336
+#define LON -84.5467
+#define TIMEZONE -4
