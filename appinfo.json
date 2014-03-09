@@ -1,0 +1,38 @@
+{
+  "uuid": "179c8e43-5562-453f-9ece-7b004ecb92c2",
+  "shortName": "natural",
+  "longName": "natural",
+  "companyName": "Thomas Hettinger",
+  "versionCode": 1,
+  "versionLabel": "0.1.0",
+  "watchapp": {
+    "watchface": true
+  },
+  "appKeys": {
+    "dummy": 0
+  },
+  "resources": {
+    "media": [
+      {
+        "type": "png",
+        "name": "FACE_BG_BLACK",
+        "file": "images/face_bg_black.png"
+      },
+      {
+        "type": "png",
+        "name": "FACE_BG_WHITE",
+        "file": "images/face_bg_white.png"
+      },
+      {
+        "type": "png",
+        "name": "SUN_HAND_BLACK",
+        "file": "images/sun_hand_black.png"
+      },
+      {
+        "type": "png",
+        "name": "SUN_HAND_WHITE",
+        "file": "images/sun_hand_white.png"
+      }
+    ]
+  }
+}
