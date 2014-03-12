@@ -10,10 +10,12 @@ Window window
             BitmapLayer(black_sun_layer)
             BitmapLayer(white_sun_layer)
         Layer TextLayer(time_text_layer)
+        Layer TextLayer(sunrise_text_layer)
+        Layer TextLayer(sunset_text_layer)
+        Layer TextLayer(loc_text_layer)
 */
 
 #include <pebble.h>
-#include "config.h"
 #include "natural.h"
 
 
@@ -23,32 +25,46 @@ static Layer *background_layer;
 static BitmapLayer *white_face_layer, *black_face_layer;
 static GBitmap *white_face_image, *black_face_image;
 static Layer *daylight_layer;
-static GPath *daylight_path;
 
 static Layer *sun_layer;
 static BitmapLayer *black_sun_layer, *white_sun_layer;
 static GBitmap *black_sun_image, *white_sun_image;
 
-static TextLayer *time_text_layer, *sunrise_text_layer, *sunset_text_layer;
-char buffer[] = "00:00";
-char sunset_buffer[32], sunrise_buffer[32], time_buffer[32];
+static TextLayer *time_text_layer, *sunrise_text_layer, *sunset_text_layer, *loc_text_layer;
 
+static char time_buffer[32], sunset_buffer[32], sunrise_buffer[32], loc_buffer[32];
+
+static int timezone_offset = 0;
+static time_t sunset_epoch;
+static time_t sunrise_epoch;
+
+static bool clean_timezone = false;
+static bool clean_sunrise = false;
+static bool clean_sunset = false;
+
+// Can probably change these to #define if i want.
 enum {
-  KEY_SUNRISE = 0,
-  KEY_SUNSET = 1,
+  KEY_TEMPERATURE = 0,
+  KEY_LONGITUDE = 1,
+  KEY_LATITUDE = 2,
+  KEY_SUNRISE = 3,
+  KEY_SUNSET = 4,
+  KEY_TIMEZONE_OFFSET = 42
 };
 
 
-//static void get_daypath_info(double lat, double lon) {
-  // calculate the daypath points
-  // day_path_info[1] = {rcos(sunset), rsin(sunset)}
-  // day_path_info[2] = {+73, rsin(sunset)}
-  // day_path_info[5] = {-73, rsin(sunrise)}
-  // day_path_info[6] = {rcos(sunrise), rsin(sunrise)}
-  //time_t now = time(NULL);  //Gets the current time and returns it as a time_t object
-  //struct tm *local_time = localtime(&now);
-  //int32_t sunset_angle = TRIG_MAX_ANGLE * sunset_time->tm_hour / 24;
-//}
+static GPoint get_point_from_time(time_t epoch) {
+  // Given an epoch, return a GPoint on the clock edge.
+  struct tm *t = localtime(&epoch);
+  int hour = t->tm_hour;
+  int min = t->tm_min;
+  int32_t angle = TRIG_MAX_ANGLE * (hour + 12.0 + (min / 60.0)) / 24.0;
+  GPoint newPoint = {
+    .x = (int16_t)(sin_lookup(angle) * (int32_t)RAD / TRIG_MAX_RATIO) + CX,
+    .y = (int16_t)(-cos_lookup(angle) * (int32_t)RAD / TRIG_MAX_RATIO) + CY
+  };
+  return newPoint;
+}
 
 
 static TextLayer* init_text_layer(GRect location, GColor color, GColor background, const char *res_id, GTextAlignment alignment) {
@@ -62,89 +78,160 @@ static TextLayer* init_text_layer(GRect location, GColor color, GColor backgroun
 }
 
 
-static void daylight_update_proc(Layer *layer, GContext *ctx) {
-  // Ask for sunrise, sunset times.
-  // Calculate new GPath shape.
-  gpath_move_to(daylight_path, GPoint(72, 84));
-  graphics_context_set_fill_color(ctx, GColorWhite);
-  gpath_draw_filled(ctx, daylight_path);
-}
-
-
-static void minute_tick_handler(struct tm *tick_time, TimeUnits units_changed) {
-  Layer *window_layer = window_get_root_layer(window);
-  GRect bounds = layer_get_bounds(window_layer);
-  const GPoint center = grect_center_point(&bounds);
-
-
-  // Handler which executes every minute.
-  strftime(buffer, sizeof("00:00"), "%H:%M", tick_time);
-  text_layer_set_text(time_text_layer, buffer);
-
-  // Move the Sun to the correct position.
-  const int16_t sunDistance = bounds.size.w / 2;
-  const int16_t sunDiameter = layer_get_bounds(sun_layer).size.w;
-  GPoint sunLocation;
-  int32_t hour_angle = TRIG_MAX_ANGLE * (tick_time->tm_hour + 12.0 + (tick_time->tm_min / 60.0)) / 24.0;
-  //int32_t hour_angle = TRIG_MAX_ANGLE * (tick_time->tm_hour + 12) / 24;
-  //TRIG_MAX_ANGLE * (((t->tm_hour + 12) * 6) + (t->tm_min / 10)))   /   (12*6);    GO ON THIS
-
-  sunLocation.y = (int16_t)(-cos_lookup(hour_angle) * (int32_t)sunDistance / TRIG_MAX_RATIO) + center.y - (sunDiameter / 2);
-  sunLocation.x = (int16_t)(sin_lookup(hour_angle) * (int32_t)sunDistance / TRIG_MAX_RATIO) + center.x - (sunDiameter / 2);
-  layer_set_frame(sun_layer, GRect(sunLocation.x, sunLocation.y, sunDiameter, sunDiameter));
-
-  layer_mark_dirty(window_get_root_layer(window));
-}
-
-
-void process_tuple(Tuple *t) {
+/*  COMMUNICATION WITH PHONE
+    ------------------------  */
+static void process_tuple(Tuple *tup) {
   // Get key
-  int key = t->key;
+  int key = tup->key;
 
   // Get int value if present
-  int value = t->value->int32;
+  int value = tup->value->int32;
 
   // Get string value if present
   char string_value[32];
-  strcpy(string_value, t->value->cstring);
+  strcpy(string_value, tup->value->cstring);
 
   // Decide what to do
   switch(key) {
+    case KEY_TEMPERATURE: ;
+      break;
+    case KEY_LONGITUDE: ;
+      snprintf(loc_buffer, sizeof("L: -999.99"), "L: %s", string_value);
+      text_layer_set_text(loc_text_layer, loc_buffer);
+      break;
+    case KEY_LATITUDE: ;
+      break;
     case KEY_SUNRISE: ;
-      time_t tempA = (time_t) value + (TIMEZONE * 3600);  // workaround until localtime() works.
-      struct tm *sunrise_time = localtime(&tempA);  // localtime not yet implemented. Returns GMT.
-      strftime(sunrise_buffer, sizeof("00:00"), "%H:%M", sunrise_time);
-      //snprintf(sunrise_buffer, sizeof("0123456789"), "%d", value);
+      sunrise_epoch = (time_t) (value - timezone_offset);   // workaround until localtime() works.
+      clean_sunrise = true;  // Use this time to check that the value actually is valid!!
+      struct tm *rise_tm = localtime(&sunrise_epoch);       // localtime not yet implemented. Returns GMT.
+      strftime(sunrise_buffer, sizeof("00:00"), "%H:%M", rise_tm);
       text_layer_set_text(sunrise_text_layer, (char*) &sunrise_buffer);
       break;
     case KEY_SUNSET: ;
-      time_t tempB = (time_t) value + (TIMEZONE * 3600);  // workaround until localtime() works.
-      struct tm *sunset_time = localtime(&tempB);  // localtime not yet implemented. Returns GMT.
-      strftime(sunset_buffer, sizeof("00:00"), "%H:%M", sunset_time);
-      //snprintf(sunset_buffer, sizeof("0123456789"), "%d", value);
+      sunset_epoch = (time_t) (value - timezone_offset);  // workaround until localtime() works.
+      clean_sunset = true;   // Use this time to check that the value actually is valid!!
+      struct tm *set_tm = localtime(&sunset_epoch);       // localtime not yet implemented. Returns GMT.
+      strftime(sunset_buffer, sizeof("00:00"), "%H:%M", set_tm);
       text_layer_set_text(sunset_text_layer, (char*) &sunset_buffer);
       break;
+    case KEY_TIMEZONE_OFFSET: ;
+      timezone_offset = value;  // update the global variable timezone offset in seconds.
+      clean_timezone = true;
   }
 }
 
 
 static void in_received_handler(DictionaryIterator *iter, void *context) {
   // This will handle the information handed to the Pebble from the phone's PebbleApp.
+  APP_LOG(APP_LOG_LEVEL_DEBUG, "Message received.");
   // Get data.
-  Tuple *t = dict_read_first(iter);
-  if(t) {
-    process_tuple(t);
+  Tuple *tup = dict_read_first(iter);
+  if (tup) {
+    process_tuple(tup);
   }
   // Get next.
-  while (t != NULL) {
-    t = dict_read_next(iter);
-    if(t) {
-      process_tuple(t);
+  while (tup != NULL) {
+    tup = dict_read_next(iter);
+    if (tup) {
+      process_tuple(tup);
     }
   }
 }
 
 
+static void in_dropped_handler(AppMessageResult reason, void *context) {
+  APP_LOG(APP_LOG_LEVEL_DEBUG, "App Message Dropped!");
+}
+
+
+static void out_failed_handler(DictionaryIterator *failed, AppMessageResult reason, void *context) {
+  APP_LOG(APP_LOG_LEVEL_DEBUG, "App Message Failed to Send!");
+}
+
+
+static void send_int(uint8_t key, uint8_t cmd) {
+  // Send a key, cmd tuple of integers to the phone app.
+  APP_LOG(APP_LOG_LEVEL_DEBUG, "Message Attempting to send.");
+  DictionaryIterator *iter;
+  app_message_outbox_begin(&iter);
+  Tuplet value = TupletInteger(key, cmd);
+  dict_write_tuplet(iter, &value);
+  app_message_outbox_send();
+}
+
+
+/*  UPDATE FUNCTIONS
+    ----------------  */
+static GPath* create_path_with_sun_times() {
+  // Calculate a new path for the current daylight hours.
+  // Must handle case where there is no time set, or the time is > 24 hours away!
+  if (clean_sunrise && clean_sunset) {
+    GPoint sunrise_point = get_point_from_time(sunrise_epoch);
+    GPoint sunset_point = get_point_from_time(sunset_epoch);  
+    
+    GPathInfo info = {
+      .num_points = 7,
+      .points = (GPoint []) {
+        {CX, CY},                // center
+        sunrise_point,           // sunrise angle (edge of circle)
+        {0, sunrise_point.y},    // left edge
+        {0, 0},                  // topleft
+        {W, 0},                  // top right
+        {W, sunset_point.y},     // right edge
+        sunset_point             // sunset point  (edge of circle)
+      }
+    };
+    GPath *new_path_ptr = gpath_create(&info);
+    return new_path_ptr;
+
+  } else {
+    GPathInfo info = {
+      .num_points = 4,
+      .points = (GPoint []) { {0, 0}, {W, 0}, {W, H}, {0, H} }
+    };
+    GPath *new_path_ptr = gpath_create(&info);
+    return new_path_ptr;
+  }
+}
+
+
+static void daylight_update_proc(Layer *layer, GContext *ctx) {
+  // Consider merging this function with create_path_with_sun_times().
+  GPath *new_path_ptr = create_path_with_sun_times();
+  gpath_move_to(new_path_ptr, GPoint(0, 0));
+  graphics_context_set_fill_color(ctx, GColorWhite);
+  gpath_draw_filled(ctx, new_path_ptr);
+  gpath_destroy(new_path_ptr); // Clear the path from RAM.
+}
+
+
+static void minute_tick_handler(struct tm *tick_time, TimeUnits units_changed) {
+  // This is the handler which executes every minute.
+  
+  // Update the clock time.
+  strftime(time_buffer, sizeof("00:00"), "%H:%M", tick_time);
+  text_layer_set_text(time_text_layer, time_buffer);
+
+  // Move the Sun to the correct position.
+  GPoint sunLocation = get_point_from_time(time(NULL));
+  //GPoint sunLocation = GPoint(60, 60);
+  const int16_t sunDiameter = layer_get_bounds(sun_layer).size.w;  // replace with definition?
+  sunLocation.x = sunLocation.x - (sunDiameter / 2);
+  sunLocation.y = sunLocation.y - (sunDiameter / 2);
+  layer_set_frame(sun_layer, GRect(sunLocation.x, sunLocation.y, sunDiameter, sunDiameter));
+
+  // Check online for updates every 15 minutes. (Arbitrary key and value)
+  if(tick_time->tm_min % 15 == 0) {
+    send_int(5, 5);
+  }
+
+  //layer_mark_dirty(window_get_root_layer(window));  // Is this line necessary?
+}
+
+
+/*  LOAD AND UNLOAD FUNCTIONS
+    -------------------------  */
 static void window_load(Window *window) {
   Layer *window_layer = window_get_root_layer(window);
   GRect bounds = layer_get_bounds(window_layer);
@@ -204,10 +291,15 @@ static void window_load(Window *window) {
   text_layer_set_text(sunset_text_layer, "00:00");
   layer_add_child(window_layer, (Layer*) sunset_text_layer);
 
+  // Create the text layer for coordinates.
+  loc_text_layer = init_text_layer(GRect(0, 6, 100, 18), GColorWhite, GColorClear, "FONT_KEY_GOTHIC_24_BOLD", GTextAlignmentLeft);
+  text_layer_set_text(loc_text_layer, "N/A");
+  layer_add_child(window_layer, (Layer*) loc_text_layer);
+
   // Execute the minute handler on window load.
-  time_t temp = time(NULL);
-  struct tm *t = localtime(&temp);
-  minute_tick_handler(t, MINUTE_UNIT);
+  time_t now = time(NULL);                         // local time_t variable
+  struct tm *startup_time = localtime(&now);       // local tm struct that will be destroyed AFTER minute_tick_handler finishes
+  minute_tick_handler(startup_time, MINUTE_UNIT);
 }
 
 
@@ -216,6 +308,7 @@ static void window_unload(Window *window) {
   text_layer_destroy(time_text_layer);
   text_layer_destroy(sunrise_text_layer);
   text_layer_destroy(sunset_text_layer);
+  text_layer_destroy(loc_text_layer);
 
   // Destroy GBitmaps.
   gbitmap_destroy(white_sun_image);
@@ -244,11 +337,10 @@ static void init(void) {
     .unload = window_unload,
   });
 
-  // Initialize GPath for daylight (currently a constant shape).
-  daylight_path = gpath_create(&DAYLIGHT_POINTS);
-
   // Register AppMessage events.
   app_message_register_inbox_received(in_received_handler);
+  app_message_register_inbox_dropped(in_dropped_handler);
+  app_message_register_outbox_failed(out_failed_handler);
   app_message_open(512, 512);  // Large input and output buffer sizes
 
   // Subscribe to 'minute' events.
@@ -259,7 +351,6 @@ static void init(void) {
 
 
 static void deinit(void) {
-  gpath_destroy(daylight_path);
   window_destroy(window);
   tick_timer_service_unsubscribe();
 }

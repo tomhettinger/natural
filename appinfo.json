@@ -5,12 +5,17 @@
   "companyName": "Thomas Hettinger",
   "versionCode": 2,
   "versionLabel": "0.2.0",
+  "capabilities": [ "location" ],
   "watchapp": {
     "watchface": true
   },
   "appKeys": {
-    "KEY_SUNRISE": 0,
-    "KEY_SUNSET": 1
+    "temperature": 0,
+    "longitude": 1,
+    "latitude": 2,
+    "sunrise": 3,
+    "sunset": 4,
+    "timezoneOffset": 42
   },
   "resources": {
     "media": [
