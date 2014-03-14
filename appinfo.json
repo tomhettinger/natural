@@ -41,16 +41,6 @@
       },
       {
         "type": "png",
-        "name": "MOON_QUARTER_01_B",
-        "file": "images/moons/quarter_01_b.png"
-      },
-      {
-        "type": "png",
-        "name": "MOON_QUARTER_01_W",
-        "file": "images/moons/quarter_01_w.png"
-      },
-      {
-        "type": "png",
         "name": "DS_B",
         "file": "images/ds_b.png"
       },
@@ -58,6 +48,266 @@
         "type": "png",
         "name": "DS_W",
         "file": "images/ds_w.png"
+      },
+      {
+        "type": "png",
+        "name": "NEW_B",
+        "file": "images/moons/new_b.png"
+      },
+      {
+        "type": "png",
+        "name": "NEW_W",
+        "file": "images/moons/new_w.png"
+      },
+      {
+        "type": "png",
+        "name": "FULL_B",
+        "file": "images/moons/full_b.png"
+      },
+      {
+        "type": "png",
+        "name": "FULL_W",
+        "file": "images/moons/full_w.png"
+      },
+      {
+        "type": "png",
+        "name": "CRESCENT_0_B",
+        "file": "images/moons/crescent_0_b.png"
+      },
+      {
+        "type": "png",
+        "name": "CRESCENT_0_W",
+        "file": "images/moons/crescent_0_w.png"
+      },
+      {
+        "type": "png",
+        "name": "CRESCENT_1_B",
+        "file": "images/moons/crescent_1_b.png"
+      },
+      {
+        "type": "png",
+        "name": "CRESCENT_1_W",
+        "file": "images/moons/crescent_1_w.png"
+      },
+      {
+        "type": "png",
+        "name": "CRESCENT_2_B",
+        "file": "images/moons/crescent_2_b.png"
+      },
+      {
+        "type": "png",
+        "name": "CRESCENT_2_W",
+        "file": "images/moons/crescent_2_w.png"
+      },
+      {
+        "type": "png",
+        "name": "CRESCENT_3_B",
+        "file": "images/moons/crescent_3_b.png"
+      },
+      {
+        "type": "png",
+        "name": "CRESCENT_3_W",
+        "file": "images/moons/crescent_3_w.png"
+      },
+      {
+        "type": "png",
+        "name": "CRESCENT_4_B",
+        "file": "images/moons/crescent_4_b.png"
+      },
+      {
+        "type": "png",
+        "name": "CRESCENT_4_W",
+        "file": "images/moons/crescent_4_w.png"
+      },
+      {
+        "type": "png",
+        "name": "CRESCENT_5_B",
+        "file": "images/moons/crescent_5_b.png"
+      },
+      {
+        "type": "png",
+        "name": "CRESCENT_5_W",
+        "file": "images/moons/crescent_5_w.png"
+      },
+      {
+        "type": "png",
+        "name": "CRESCENT_6_B",
+        "file": "images/moons/crescent_6_b.png"
+      },
+      {
+        "type": "png",
+        "name": "CRESCENT_6_W",
+        "file": "images/moons/crescent_6_w.png"
+      },
+      {
+        "type": "png",
+        "name": "CRESCENT_7_B",
+        "file": "images/moons/crescent_7_b.png"
+      },
+      {
+        "type": "png",
+        "name": "CRESCENT_7_W",
+        "file": "images/moons/crescent_7_w.png"
+      },
+      {
+        "type": "png",
+        "name": "QUARTER_0_B",
+        "file": "images/moons/quarter_0_b.png"
+      },
+      {
+        "type": "png",
+        "name": "QUARTER_0_W",
+        "file": "images/moons/quarter_0_w.png"
+      },
+      {
+        "type": "png",
+        "name": "QUARTER_1_B",
+        "file": "images/moons/quarter_1_b.png"
+      },
+      {
+        "type": "png",
+        "name": "QUARTER_1_W",
+        "file": "images/moons/quarter_1_w.png"
+      },
+      {
+        "type": "png",
+        "name": "QUARTER_2_B",
+        "file": "images/moons/quarter_2_b.png"
+      },
+      {
+        "type": "png",
+        "name": "QUARTER_2_W",
+        "file": "images/moons/quarter_2_w.png"
+      },
+      {
+        "type": "png",
+        "name": "QUARTER_3_B",
+        "file": "images/moons/quarter_3_b.png"
+      },
+      {
+        "type": "png",
+        "name": "QUARTER_3_W",
+        "file": "images/moons/quarter_3_w.png"
+      },
+      {
+        "type": "png",
+        "name": "QUARTER_4_B",
+        "file": "images/moons/quarter_4_b.png"
+      },
+      {
+        "type": "png",
+        "name": "QUARTER_4_W",
+        "file": "images/moons/quarter_4_w.png"
+      },
+      {
+        "type": "png",
+        "name": "QUARTER_5_B",
+        "file": "images/moons/quarter_5_b.png"
+      },
+      {
+        "type": "png",
+        "name": "QUARTER_5_W",
+        "file": "images/moons/quarter_5_w.png"
+      },
+      {
+        "type": "png",
+        "name": "QUARTER_6_B",
+        "file": "images/moons/quarter_6_b.png"
+      },
+      {
+        "type": "png",
+        "name": "QUARTER_6_W",
+        "file": "images/moons/quarter_6_w.png"
+      },
+      {
+        "type": "png",
+        "name": "QUARTER_7_B",
+        "file": "images/moons/quarter_7_b.png"
+      },
+      {
+        "type": "png",
+        "name": "QUARTER_7_W",
+        "file": "images/moons/quarter_7_w.png"
+      },
+      {
+        "type": "png",
+        "name": "GIBBOUS_0_B",
+        "file": "images/moons/gibbous_0_b.png"
+      },
+      {
+        "type": "png",
+        "name": "GIBBOUS_0_W",
+        "file": "images/moons/gibbous_0_w.png"
+      },
+      {
+        "type": "png",
+        "name": "GIBBOUS_1_B",
+        "file": "images/moons/gibbous_1_b.png"
+      },
+      {
+        "type": "png",
+        "name": "GIBBOUS_1_W",
+        "file": "images/moons/gibbous_1_w.png"
+      },
+      {
+        "type": "png",
+        "name": "GIBBOUS_2_B",
+        "file": "images/moons/gibbous_2_b.png"
+      },
+      {
+        "type": "png",
+        "name": "GIBBOUS_2_W",
+        "file": "images/moons/gibbous_2_w.png"
+      },
+      {
+        "type": "png",
+        "name": "GIBBOUS_3_B",
+        "file": "images/moons/gibbous_3_b.png"
+      },
+      {
+        "type": "png",
+        "name": "GIBBOUS_3_W",
+        "file": "images/moons/gibbous_3_w.png"
+      },
+      {
+        "type": "png",
+        "name": "GIBBOUS_4_B",
+        "file": "images/moons/gibbous_4_b.png"
+      },
+      {
+        "type": "png",
+        "name": "GIBBOUS_4_W",
+        "file": "images/moons/gibbous_4_w.png"
+      },
+      {
+        "type": "png",
+        "name": "GIBBOUS_5_B",
+        "file": "images/moons/gibbous_5_b.png"
+      },
+      {
+        "type": "png",
+        "name": "GIBBOUS_5_W",
+        "file": "images/moons/gibbous_5_w.png"
+      },
+      {
+        "type": "png",
+        "name": "GIBBOUS_6_B",
+        "file": "images/moons/gibbous_6_b.png"
+      },
+      {
+        "type": "png",
+        "name": "GIBBOUS_6_W",
+        "file": "images/moons/gibbous_6_w.png"
+      },
+      {
+        "type": "png",
+        "name": "GIBBOUS_7_B",
+        "file": "images/moons/gibbous_7_b.png"
+      },
+      {
+        "type": "png",
+        "name": "GIBBOUS_7_W",
+        "file": "images/moons/gibbous_7_w.png"
       }
     ]
   }

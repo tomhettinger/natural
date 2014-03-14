@@ -54,7 +54,7 @@ const time_t new_moon = (time_t) -2522793600;    // Jan 21, 1890
 const double lunar_cycle = 2551442.98;           // In seconds.
 
 
-enum {
+enum datakeys {
   KEY_TEMPERATURE = 0,
   KEY_LONGITUDE = 1,
   KEY_LATITUDE = 2,
@@ -428,6 +428,31 @@ static void update_moon_image(time_t now) {
   rotation = rotation - (int)rotation;
   int img_rotation = (int) ((rotation+0.0625) / 0.125);
   if (img_rotation == 8) {img_rotation = 0;}
+
+  /* 
+  new_image_index = {img_type, img_rotation}
+  if (new_image_index != current_image_index) {
+    uint32_t resource_id_b = resources_list[a][b];
+    uint32_t resource_id_w = resources_list[a][b];
+
+    gbitmap_destroy(b_moon_image);
+    gbitmap_destroy(w_moon_image);
+
+    b_moon_image = gbitmap_create_with_resource(resource_id_b);
+    b_moon_layer = bitmap_layer_create(GRect(0, 0, 15, 15));
+    bitmap_layer_set_bitmap(b_moon_layer, b_moon_image);
+    bitmap_layer_set_background_color(b_moon_layer, GColorClear);
+    bitmap_layer_set_compositing_mode(b_moon_layer, GCompOpAnd);
+    layer_add_child(moon_layer, bitmap_layer_get_layer(b_moon_layer));
+
+    w_moon_image = gbitmap_create_with_resource(resource_id_w);
+    w_moon_layer = bitmap_layer_create(GRect(0, 0, 15, 15));
+    bitmap_layer_set_bitmap(w_moon_layer, w_moon_image);
+    bitmap_layer_set_background_color(w_moon_layer, GColorClear);
+    bitmap_layer_set_compositing_mode(w_moon_layer, GCompOpAnd);
+    layer_add_child(moon_layer, bitmap_layer_get_layer(w_moon_layer));
+  }
+  */
 }
 
 
