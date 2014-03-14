@@ -21,23 +21,43 @@
     "media": [
       {
         "type": "png",
-        "name": "FACE_BG_BLACK",
+        "name": "CLOCKFACE_B",
         "file": "images/face_bg_black.png"
       },
       {
         "type": "png",
-        "name": "FACE_BG_WHITE",
+        "name": "CLOCKFACE_W",
         "file": "images/face_bg_white.png"
       },
       {
         "type": "png",
-        "name": "SUN_HAND_BLACK",
+        "name": "SUN_B",
         "file": "images/sun_hand_black.png"
       },
       {
         "type": "png",
-        "name": "SUN_HAND_WHITE",
+        "name": "SUN_W",
         "file": "images/sun_hand_white.png"
+      },
+      {
+        "type": "png",
+        "name": "MOON_QUARTER_01_B",
+        "file": "images/moons/quarter_01_b.png"
+      },
+      {
+        "type": "png",
+        "name": "MOON_QUARTER_01_W",
+        "file": "images/moons/quarter_01_w.png"
+      },
+      {
+        "type": "png",
+        "name": "DS_B",
+        "file": "images/ds_b.png"
+      },
+      {
+        "type": "png",
+        "name": "DS_W",
+        "file": "images/ds_w.png"
       }
     ]
   }

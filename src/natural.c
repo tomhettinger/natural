@@ -7,12 +7,15 @@ Window window
                 GPath daylight_path
             BitmapLayer(face_bg_black_layer)
         Layer sun_layer
-            BitmapLayer(black_sun_layer)
-            BitmapLayer(white_sun_layer)
+            BitmapLayer(b_sun_layer)
+            BitmapLayer(w_sun_layer)
+        Layer moon_layer
+            BitmapLayer(b_moon_layer)
+            BitmapLayer(w_moon_layer)
         Layer TextLayer(time_text_layer)
-        Layer TextLayer(sunrise_text_layer)
-        Layer TextLayer(sunset_text_layer)
-        Layer TextLayer(loc_text_layer)
+        Layer TextLayer(next_sunrise_text_layer)
+        Layer TextLayer(next_sunset_text_layer)
+        Layer TextLayer(longitude_text_layer)
 */
 
 #include <pebble.h>
@@ -22,15 +25,19 @@ Window window
 static Window *window;
 
 static Layer *background_layer;
-static BitmapLayer *white_face_layer, *black_face_layer;
-static GBitmap *white_face_image, *black_face_image;
+static BitmapLayer *b_clockface_layer, *w_clockface_layer;
+static GBitmap *b_clockface_image, *w_clockface_image;
 static Layer *daylight_layer;
 
 static Layer *sun_layer;
-static BitmapLayer *black_sun_layer, *white_sun_layer;
-static GBitmap *black_sun_image, *white_sun_image;
+static BitmapLayer *b_sun_layer, *w_sun_layer;
+static GBitmap *b_sun_image, *w_sun_image;
 
-static TextLayer *time_text_layer, *sunrise_text_layer, *sunset_text_layer, *loc_text_layer;
+static Layer *moon_layer;
+static BitmapLayer *b_moon_layer, *w_moon_layer;
+static GBitmap *b_moon_image, *w_moon_image;
+
+static TextLayer *time_text_layer, *next_sunrise_text_layer, *next_sunset_text_layer, *longitude_text_layer;
 
 static char time_buffer[32], sunset_buffer[32], sunrise_buffer[32];
 
@@ -39,9 +46,13 @@ static bool clean_timezone = false;
 
 static char latitude[32], longitude[32];
 
-static const time_t INF = (time_t)  1489362018;
+static const time_t INF = (time_t) 148204965966; // is 6666    //1489362018 is 2017
 static const time_t INVALID = (time_t)  666;
 static time_t prev_sunrise_epoch, next_sunrise_epoch, prev_sunset_epoch, next_sunset_epoch;
+
+const time_t new_moon = (time_t) -2522793600;    // Jan 21, 1890
+const double lunar_cycle = 2551442.98;           // In seconds.
+
 
 enum {
   KEY_TEMPERATURE = 0,
@@ -53,7 +64,7 @@ enum {
 };
 
 
-static GPoint get_point_from_time(time_t epoch) {  //int tzone_offset
+static GPoint get_point_from_time(time_t epoch) {
   // Given an epoch, return a GPoint on the clock edge.
   struct tm *t = localtime(&epoch);
   int hour = t->tm_hour;
@@ -215,11 +226,9 @@ static void daylight_update_proc(Layer *layer, GContext *ctx) {
   or fill in the face with a solid color. */
   char log_buffer[264];
 
-  snprintf(log_buffer, 264, "daylight_update_proc()  prev_sunrise=%d,  prev_sunset=%d", 
-           (int) prev_sunrise_epoch, (int) prev_sunset_epoch);
+  snprintf(log_buffer, 264, "daylight_update_proc()  prev_sunrise=%d,  prev_sunset=%d", (int) prev_sunrise_epoch, (int) prev_sunset_epoch);
   APP_LOG(APP_LOG_LEVEL_DEBUG, log_buffer);
-  snprintf(log_buffer, 264, "daylight_update_proc()  next_sunrise=%d, next_sunset=%d", 
-           (int) next_sunrise_epoch, (int) next_sunset_epoch);
+  snprintf(log_buffer, 264, "daylight_update_proc()  next_sunrise=%d, next_sunset=%d", (int) next_sunrise_epoch, (int) next_sunset_epoch);
   APP_LOG(APP_LOG_LEVEL_DEBUG, log_buffer);
 
   time_t now = time(NULL);
@@ -227,20 +236,18 @@ static void daylight_update_proc(Layer *layer, GContext *ctx) {
   time_t this_sunset_epoch;
 
   // Decided which times to use.
-  if (difftime(next_sunrise_epoch, now) < 86400) {
+  if (difftime(next_sunrise_epoch, now)<86400) {
     this_sunrise_epoch = next_sunrise_epoch;
-  } else if (difftime(now, prev_sunrise_epoch) < 86400) {
+  } else if (difftime(now, prev_sunrise_epoch)<86400) {
     this_sunrise_epoch = prev_sunrise_epoch;
-  }
-  else {
+  } else {
     this_sunrise_epoch = INVALID;
   }
-  if (difftime(next_sunset_epoch, now) < 86400) {
+  if (difftime(next_sunset_epoch, now)<86400) {
     this_sunset_epoch = next_sunset_epoch;
-  } else if (difftime(now, prev_sunset_epoch) < 86400) {
+  } else if (difftime(now, prev_sunset_epoch)<86400) {
     this_sunset_epoch = prev_sunset_epoch;
-  }
-  else {
+  } else {
     this_sunset_epoch = INVALID;
   }
 
@@ -278,18 +285,12 @@ static void daylight_update_proc(Layer *layer, GContext *ctx) {
   } else if (difftime(next_sunset_epoch, now)>86400 && next_sunset_epoch != INF && 
              difftime(next_sunrise_epoch, now)>86400 && next_sunrise_epoch != INF) { 
     // It is perpetual daylight or nighttime if both rise and set are more than 24h in future.
-    snprintf(log_buffer, 264, "all day or all night: next_sunrise=%d, next_sunset=%d, INF=%d", 
-             (int) next_sunrise_epoch, (int) next_sunset_epoch, (int) INF);
+    snprintf(log_buffer, 264, "all day or all night: next_sunrise=%d, next_sunset=%d, INF=%d", (int) next_sunrise_epoch, (int) next_sunset_epoch, (int) INF);
     APP_LOG(APP_LOG_LEVEL_DEBUG, log_buffer);
 
     if (difftime(next_sunset_epoch, next_sunrise_epoch)>0) {
       // It is perpetual night time.  Don't draw a path.
-
-      //GPathInfo info = {
-      //  .num_points = 3,
-      //  .points = (GPoint []) { {-1, -1}, {-4, -1}, {-4, -5} }
-      //};
-      //GPath *new_path_ptr = gpath_create(&info);
+      //GPath *new_path_ptr = gpath_create(&FULL_NIGHT_PATH_INFO);
       //gpath_move_to(new_path_ptr, GPoint(0, 0));
       //graphics_context_set_fill_color(ctx, GColorWhite);
       //gpath_draw_filled(ctx, new_path_ptr);
@@ -330,8 +331,7 @@ static void daylight_update_proc(Layer *layer, GContext *ctx) {
 
   } else {
     // Insufficient information.
-    snprintf(log_buffer, 264, "insufficient info: next_sunrise=%d, next_sunset=%d, INF=%d", 
-             (int) next_sunrise_epoch, (int) next_sunset_epoch, (int) INF);
+    snprintf(log_buffer, 264, "insufficient info: next_sunrise=%d, next_sunset=%d, INF=%d", (int) next_sunrise_epoch, (int) next_sunset_epoch, (int) INF);
     APP_LOG(APP_LOG_LEVEL_DEBUG, log_buffer);
     GPath *new_path_ptr = gpath_create(&FULL_DAY_PATH_INFO);
     gpath_move_to(new_path_ptr, GPoint(0, 0));
@@ -346,31 +346,31 @@ static void update_rise_and_set_epochs(time_t now) {
   char log_buffer[164];
 
   // Assertions
-  if ( difftime(now, prev_sunrise_epoch) < 0 ) {  // prev_sunrise_epoch <= now
+  if (difftime(now, prev_sunrise_epoch)<0) {  // prev_sunrise_epoch <= now
     snprintf(log_buffer, 164, "ERROR: (prev_sunrise <= now) failed assertion  %d, %d", (int) prev_sunrise_epoch, (int) now);
     APP_LOG(APP_LOG_LEVEL_DEBUG, log_buffer);
   }
-  if ( difftime(next_sunrise_epoch, prev_sunrise_epoch) < 0 ) {  // prev_sunrise_epoch <= next_sunrise_epoch
+  if (difftime(next_sunrise_epoch, prev_sunrise_epoch)<0) {  // prev_sunrise_epoch <= next_sunrise_epoch
     snprintf(log_buffer, 164, "ERROR: (prev_sunrise <= next_sunrise) failed assertion:  %d, %d", (int) prev_sunrise_epoch, (int) next_sunrise_epoch);
     APP_LOG(APP_LOG_LEVEL_DEBUG, log_buffer);
   }
-  if ( difftime(now, prev_sunset_epoch) < 0 ) {  //prev_sunset_epoch <= now
+  if (difftime(now, prev_sunset_epoch)<0) {  //prev_sunset_epoch <= now
     snprintf(log_buffer, 164, "ERROR: (prev_sunset <= now) failed assertion  %d, %d", (int) prev_sunset_epoch, (int) now);
     APP_LOG(APP_LOG_LEVEL_DEBUG, log_buffer);
   }
-  if ( difftime(next_sunset_epoch, prev_sunset_epoch) < 0 ) {  // prev_sunset_epoch <= next_sunset_epoch
+  if (difftime(next_sunset_epoch, prev_sunset_epoch)<0) {  // prev_sunset_epoch <= next_sunset_epoch
     snprintf(log_buffer, 164, "ERROR: (prev_sunset <= next_sunset) failed assertion  %d, %d", (int) prev_sunset_epoch, (int) next_sunset_epoch);
     APP_LOG(APP_LOG_LEVEL_DEBUG, log_buffer);
   }
 
   // If the current time has passed the 'next' rise, set it as the 'prev' rise.
-  if ( difftime(now, next_sunrise_epoch) > 0 ) {
+  if (difftime(now, next_sunrise_epoch)>0) {
     snprintf(log_buffer, 164, "Current time passed next_sunrise. Moving to prev_sunrise.  %d", (int) next_sunrise_epoch);
     APP_LOG(APP_LOG_LEVEL_DEBUG, log_buffer);
     prev_sunrise_epoch = next_sunrise_epoch;
     next_sunrise_epoch = (time_t) INF;
   }
-  if ( difftime(now, next_sunset_epoch) > 0 ) {
+  if (difftime(now, next_sunset_epoch)>0) {
     snprintf(log_buffer, 164, "Current time passed next_sunset. Moving to prev_sunrise.  %d", (int) next_sunset_epoch);
     APP_LOG(APP_LOG_LEVEL_DEBUG, log_buffer);
     prev_sunset_epoch = next_sunset_epoch;
@@ -384,19 +384,59 @@ static void refresh_rise_and_set_text() {
   if (next_sunrise_epoch != INF) {
     struct tm *rise_tm = localtime(&next_sunrise_epoch);
     strftime(sunrise_buffer, sizeof("00:00"), "%H:%M", rise_tm);
-    text_layer_set_text(sunrise_text_layer, (char*) &sunrise_buffer);
+    text_layer_set_text(next_sunrise_text_layer, (char*) &sunrise_buffer);
   } else {
     snprintf(sunrise_buffer, sizeof("N/A"), "N/A");
-    text_layer_set_text(sunrise_text_layer, (char*) &sunrise_buffer);
+    text_layer_set_text(next_sunrise_text_layer, (char*) &sunrise_buffer);
   }
     if (next_sunset_epoch != INF) {
     struct tm *set_tm = localtime(&next_sunset_epoch);
     strftime(sunset_buffer, sizeof("00:00"), "%H:%M", set_tm);
-    text_layer_set_text(sunset_text_layer, (char*) &sunset_buffer);
+    text_layer_set_text(next_sunset_text_layer, (char*) &sunset_buffer);
   } else {
     snprintf(sunset_buffer, sizeof("N/A"), "N/A");
-    text_layer_set_text(sunset_text_layer, (char*) &sunset_buffer);
+    text_layer_set_text(next_sunset_text_layer, (char*) &sunset_buffer);
   }
+}
+
+
+static double calc_moon_phase(time_t now) {
+  // Calculate the current moon phase from 0 to 1 with 0=new, 0.25=first quarter, and 0.5=full.
+  long diff = (long) difftime(now, new_moon);
+  double phase = diff / lunar_cycle;
+  phase = phase - (int)phase;
+  return phase;
+}
+
+
+static void update_moon_image(time_t now) {
+  /* Determine the image_type and image_rotation to use. Phase must be in range [0,1].
+  Image types:  {0:new, 1:wax_cresc, 2:first_quarter, 3:wax_gibb, 4:full, ..., 7:wan_cresc}
+  Rotations are {0:sun_at_00, 1:sun_at_03, 2:sun_at_06, 3:sun_at_09, ...}  */
+
+  // Determine which image_type to use.
+  double phase = calc_moon_phase(now);
+  int img_type = (int) ((phase + 0.0625) / 0.125);
+  if (img_type == 8) {img_type = 0;}
+
+  // Determine which image_rotation to use.
+  struct tm *now_cal = localtime(&now);
+  int h = now_cal->tm_hour;
+  int m = now_cal->tm_min;
+  double hour = h + (m / 60.0);
+  double rotation = hour / 24.0;
+  rotation = rotation - (int)rotation;
+  int img_rotation = (int) ((rotation+0.0625) / 0.125);
+  if (img_rotation == 8) {img_rotation = 0;}
+}
+
+
+static time_t calc_moon_position_time(time_t now) {
+  // Caluclate the 'effective time' to place the moon.   0.5 = 12 hours, 0.25 = 6 hours
+  double phase = calc_moon_phase(now);
+  double seconds_ahead = (phase * 24.0 * 3600);
+  time_t moontime = (time_t) ((long)now + seconds_ahead);
+  return moontime;
 }
 
 
@@ -410,6 +450,17 @@ static void reframe_sun_layer(time_t now) {
 }
 
 
+static void reframe_moon_layer(time_t now) {
+  // Reframe the Sun layer to the correct position.
+  time_t moontime = calc_moon_position_time(now);
+  GPoint moonLocation = get_point_from_time(moontime);
+  const int16_t moonDiameter = layer_get_bounds(moon_layer).size.w;  // replace with definition?
+  moonLocation.x = moonLocation.x - (moonDiameter / 2);
+  moonLocation.y = moonLocation.y - (moonDiameter / 2);
+  layer_set_frame(moon_layer, GRect(moonLocation.x, moonLocation.y, moonDiameter, moonDiameter));
+}
+
+
 static void minute_tick_handler(struct tm *tick_time, TimeUnits units_changed) {
   time_t now = time(NULL);
 
@@ -420,9 +471,11 @@ static void minute_tick_handler(struct tm *tick_time, TimeUnits units_changed) {
   // Move the Sun to the correct position.
   reframe_sun_layer(now);
 
-  // Update the moon position and image.
-  //update_moon_image();  // only updates if necessary
-  //reframe_moon_layer(now);
+  // Update the moon image.
+  //update_moon_image(now);  // only update img if necessary
+
+  // Move the Moon to the correct position.
+  reframe_moon_layer(now);
 
   // Update the current location coordinates. AND timezone!
   //send_int(88, 1);  // 88 is the key that tells the .js file to only check for location.
@@ -447,7 +500,7 @@ static void minute_tick_handler(struct tm *tick_time, TimeUnits units_changed) {
   refresh_rise_and_set_text();
 
   // Update the current lat/long text layers.
-  text_layer_set_text(loc_text_layer, longitude);
+  text_layer_set_text(longitude_text_layer, longitude);
 
   // Tell the daylight layer to update itself.
   layer_mark_dirty(daylight_layer);
@@ -464,42 +517,61 @@ static void window_load(Window *window) {
   background_layer = layer_create(bounds);
   layer_add_child(window_layer, background_layer);
 
-  white_face_image = gbitmap_create_with_resource(RESOURCE_ID_FACE_BG_WHITE);
-  white_face_layer = bitmap_layer_create(bounds);
-  bitmap_layer_set_bitmap(white_face_layer, white_face_image);
-  bitmap_layer_set_background_color(white_face_layer, GColorClear);
-  bitmap_layer_set_compositing_mode(white_face_layer, GCompOpAssign);
-  layer_add_child(background_layer, bitmap_layer_get_layer(white_face_layer));
+  w_clockface_image = gbitmap_create_with_resource(RESOURCE_ID_CLOCKFACE_W);
+  w_clockface_layer = bitmap_layer_create(bounds);
+  bitmap_layer_set_bitmap(w_clockface_layer, w_clockface_image);
+  bitmap_layer_set_background_color(w_clockface_layer, GColorClear);
+  bitmap_layer_set_compositing_mode(w_clockface_layer, GCompOpAssign);
+  layer_add_child(background_layer, bitmap_layer_get_layer(w_clockface_layer));
 
   daylight_layer = layer_create(bounds);
   layer_set_update_proc(daylight_layer, daylight_update_proc);
   layer_add_child(background_layer, daylight_layer);
 
-  black_face_image = gbitmap_create_with_resource(RESOURCE_ID_FACE_BG_BLACK);
-  black_face_layer = bitmap_layer_create(bounds);
-  bitmap_layer_set_bitmap(black_face_layer, black_face_image);
-  bitmap_layer_set_background_color(black_face_layer, GColorClear);
-  bitmap_layer_set_compositing_mode(black_face_layer, GCompOpAnd);
-  layer_add_child(background_layer, bitmap_layer_get_layer(black_face_layer));
+  b_clockface_image = gbitmap_create_with_resource(RESOURCE_ID_CLOCKFACE_B);
+  b_clockface_layer = bitmap_layer_create(bounds);
+  bitmap_layer_set_bitmap(b_clockface_layer, b_clockface_image);
+  bitmap_layer_set_background_color(b_clockface_layer, GColorClear);
+  bitmap_layer_set_compositing_mode(b_clockface_layer, GCompOpAnd);
+  layer_add_child(background_layer, bitmap_layer_get_layer(b_clockface_layer));
 
-  // Create the sun layer including both sun images.
+  // Create the sun layer
   sun_layer = layer_create(GRect(0, 0, 19, 19));
   layer_set_frame(sun_layer, GRect(0, 100, 19, 19));  // Use this to move sun. (x, y, 19, 19)
   layer_add_child(window_layer, sun_layer);
 
-  black_sun_image = gbitmap_create_with_resource(RESOURCE_ID_SUN_HAND_BLACK);
-  black_sun_layer = bitmap_layer_create(GRect(0, 0, 19, 19));
-  bitmap_layer_set_bitmap(black_sun_layer, black_sun_image);
-  bitmap_layer_set_background_color(black_sun_layer, GColorClear);
-  bitmap_layer_set_compositing_mode(black_sun_layer, GCompOpAnd);
-  layer_add_child(sun_layer, bitmap_layer_get_layer(black_sun_layer));
+  b_sun_image = gbitmap_create_with_resource(RESOURCE_ID_SUN_B);
+  b_sun_layer = bitmap_layer_create(GRect(0, 0, 19, 19));
+  bitmap_layer_set_bitmap(b_sun_layer, b_sun_image);
+  bitmap_layer_set_background_color(b_sun_layer, GColorClear);
+  bitmap_layer_set_compositing_mode(b_sun_layer, GCompOpAnd);
+  layer_add_child(sun_layer, bitmap_layer_get_layer(b_sun_layer));
 
-  white_sun_image = gbitmap_create_with_resource(RESOURCE_ID_SUN_HAND_WHITE);
-  white_sun_layer = bitmap_layer_create(GRect(0, 0, 19, 19));
-  bitmap_layer_set_bitmap(white_sun_layer, white_sun_image);
-  bitmap_layer_set_background_color(white_sun_layer, GColorClear);
-  bitmap_layer_set_compositing_mode(white_sun_layer, GCompOpOr);
-  layer_add_child(sun_layer, bitmap_layer_get_layer(white_sun_layer));
+  w_sun_image = gbitmap_create_with_resource(RESOURCE_ID_SUN_W);
+  w_sun_layer = bitmap_layer_create(GRect(0, 0, 19, 19));
+  bitmap_layer_set_bitmap(w_sun_layer, w_sun_image);
+  bitmap_layer_set_background_color(w_sun_layer, GColorClear);
+  bitmap_layer_set_compositing_mode(w_sun_layer, GCompOpOr);
+  layer_add_child(sun_layer, bitmap_layer_get_layer(w_sun_layer));
+
+  // Create the moon layer
+  moon_layer = layer_create(GRect(0, 0, 15, 15));
+  layer_set_frame(moon_layer, GRect(80, 100, 15, 15));
+  layer_add_child(window_layer, moon_layer);
+
+  b_moon_image = gbitmap_create_with_resource(RESOURCE_ID_DS_B);
+  b_moon_layer = bitmap_layer_create(GRect(0, 0, 15, 15));
+  bitmap_layer_set_bitmap(b_moon_layer, b_moon_image);
+  bitmap_layer_set_background_color(b_moon_layer, GColorClear);
+  bitmap_layer_set_compositing_mode(b_moon_layer, GCompOpAnd);
+  layer_add_child(moon_layer, bitmap_layer_get_layer(b_moon_layer));
+
+  w_moon_image = gbitmap_create_with_resource(RESOURCE_ID_DS_W);
+  w_moon_layer = bitmap_layer_create(GRect(0, 0, 15, 15));
+  bitmap_layer_set_bitmap(w_moon_layer, w_moon_image);
+  bitmap_layer_set_background_color(w_moon_layer, GColorClear);
+  bitmap_layer_set_compositing_mode(w_moon_layer, GCompOpAnd);
+  layer_add_child(moon_layer, bitmap_layer_get_layer(w_moon_layer));
 
   // Create the text layer to hold the current time.
   time_text_layer = init_text_layer(GRect(0, 144, 40, 18), GColorWhite, GColorClear, "FONT_KEY_GOTHIC_24_BOLD", GTextAlignmentCenter);
@@ -507,17 +579,17 @@ static void window_load(Window *window) {
   layer_add_child(window_layer, (Layer*) time_text_layer);
   
   // Create the text layers to hold the sunrise and sunset times.
-  sunrise_text_layer = init_text_layer(GRect(104, 6, 40, 18), GColorWhite, GColorClear, "FONT_KEY_GOTHIC_24_BOLD", GTextAlignmentCenter);
-  text_layer_set_text(sunrise_text_layer, "N/A");
-  layer_add_child(window_layer, (Layer*) sunrise_text_layer);
-  sunset_text_layer = init_text_layer(GRect(104, 144, 40, 18), GColorWhite, GColorClear, "FONT_KEY_GOTHIC_24_BOLD", GTextAlignmentCenter);
-  text_layer_set_text(sunset_text_layer, "N/A");
-  layer_add_child(window_layer, (Layer*) sunset_text_layer);
+  next_sunrise_text_layer = init_text_layer(GRect(104, 6, 40, 18), GColorWhite, GColorClear, "FONT_KEY_GOTHIC_24_BOLD", GTextAlignmentCenter);
+  text_layer_set_text(next_sunrise_text_layer, "N/A");
+  layer_add_child(window_layer, (Layer*) next_sunrise_text_layer);
+  next_sunset_text_layer = init_text_layer(GRect(104, 144, 40, 18), GColorWhite, GColorClear, "FONT_KEY_GOTHIC_24_BOLD", GTextAlignmentCenter);
+  text_layer_set_text(next_sunset_text_layer, "N/A");
+  layer_add_child(window_layer, (Layer*) next_sunset_text_layer);
 
   // Create the text layer for coordinates.
-  loc_text_layer = init_text_layer(GRect(0, 6, 100, 18), GColorWhite, GColorClear, "FONT_KEY_GOTHIC_24_BOLD", GTextAlignmentLeft);
-  text_layer_set_text(loc_text_layer, "N/A");
-  layer_add_child(window_layer, (Layer*) loc_text_layer);
+  longitude_text_layer = init_text_layer(GRect(0, 6, 100, 18), GColorWhite, GColorClear, "FONT_KEY_GOTHIC_24_BOLD", GTextAlignmentLeft);
+  text_layer_set_text(longitude_text_layer, "N/A");
+  layer_add_child(window_layer, (Layer*) longitude_text_layer);
 
   // Initialize times and location variables.
   prev_sunrise_epoch = (time_t) 0;
@@ -537,24 +609,29 @@ static void window_load(Window *window) {
 static void window_unload(Window *window) {
   // Destroy TextLayers.
   text_layer_destroy(time_text_layer);
-  text_layer_destroy(sunrise_text_layer);
-  text_layer_destroy(sunset_text_layer);
-  text_layer_destroy(loc_text_layer);
+  text_layer_destroy(next_sunrise_text_layer);
+  text_layer_destroy(next_sunset_text_layer);
+  text_layer_destroy(longitude_text_layer);
 
   // Destroy GBitmaps.
-  gbitmap_destroy(white_sun_image);
-  gbitmap_destroy(black_sun_image);
-  gbitmap_destroy(black_face_image);
-  gbitmap_destroy(white_face_image);
+  gbitmap_destroy(b_sun_image);
+  gbitmap_destroy(w_sun_image);
+  gbitmap_destroy(b_moon_image);
+  gbitmap_destroy(w_moon_image);
+  gbitmap_destroy(b_clockface_image);
+  gbitmap_destroy(w_clockface_image);
 
   // Destroy BitmapLayrs.
-  bitmap_layer_destroy(white_sun_layer);
-  bitmap_layer_destroy(black_sun_layer);
-  bitmap_layer_destroy(black_face_layer);
-  bitmap_layer_destroy(white_face_layer);
+  bitmap_layer_destroy(b_sun_layer);
+  bitmap_layer_destroy(w_sun_layer);
+  bitmap_layer_destroy(b_moon_layer);
+  bitmap_layer_destroy(w_moon_layer);
+  bitmap_layer_destroy(b_clockface_layer);
+  bitmap_layer_destroy(w_clockface_layer);
 
   // Destroy Layers.
   layer_destroy(sun_layer);
+  layer_destroy(moon_layer);
   layer_destroy(background_layer);
   layer_destroy(daylight_layer);
 }
