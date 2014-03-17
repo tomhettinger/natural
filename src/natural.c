@@ -46,11 +46,12 @@ static bool clean_timezone = false;
 
 static char latitude[32], longitude[32];
 
-static const time_t INF = (time_t) 148204965966; // is 6666    //1489362018 is 2017
+static const time_t INF = (time_t) 2147483640; // 7 seconds before 2038 event.
+static const time_t ZERO = (time_t) 0;
 static const time_t INVALID = (time_t)  666;
 static time_t prev_sunrise_epoch, next_sunrise_epoch, prev_sunset_epoch, next_sunset_epoch;
 
-const time_t new_moon = (time_t) -2522793600;    // Jan 21, 1890
+const time_t new_moon = (time_t) 1393678800;    // A recent new moon at March 1, 2014 13:00 UT
 const double lunar_cycle = 2551442.98;           // In seconds.
 
 
@@ -312,13 +313,13 @@ static void daylight_update_proc(Layer *layer, GContext *ctx) {
       }
     }
 
-  } else if (difftime(now, prev_sunset_epoch)<86400 && prev_sunset_epoch != (time_t) 0 &&
+  } else if (difftime(now, prev_sunset_epoch)<86400 && prev_sunset_epoch != ZERO &&
             difftime(next_sunrise_epoch, now)>86400 && next_sunrise_epoch != INF) {
     /* It is perpetual nighttime since a recent set means the next set must be after next rise, and 
     the next rise will not happen for a long time. Don't draw the day path.*/
     // DRAW SUNSET LINE HERE
 
-  } else if (difftime(now, prev_sunrise_epoch)<86400 && prev_sunrise_epoch != (time_t) 0 &&
+  } else if (difftime(now, prev_sunrise_epoch)<86400 && prev_sunrise_epoch != ZERO &&
             difftime(next_sunset_epoch, now)>86400 && next_sunset_epoch != INF) {
     /* It is perpetual daytime since a recent rise means the next rise must be after the next set,
     and the next set will not happen for a long time. Draw full day path.*/
@@ -402,9 +403,18 @@ static void refresh_rise_and_set_text() {
 
 static double calc_moon_phase(time_t now) {
   // Calculate the current moon phase from 0 to 1 with 0=new, 0.25=first quarter, and 0.5=full.
-  long diff = (long) difftime(now, new_moon);
+  // Must add timezone offset in order to get UT. Uggh.
+  double diff = difftime(now, new_moon) + timezone_offset;
+
+  char log_buffer[164];
+  snprintf(log_buffer, 164, "(int) diff = %d", (int)(diff));
+  APP_LOG(APP_LOG_LEVEL_DEBUG, log_buffer);
+
   double phase = diff / lunar_cycle;
   phase = phase - (int)phase;
+
+  snprintf(log_buffer, 164, "phase*100 = %d", (int)(phase*100.0));
+  APP_LOG(APP_LOG_LEVEL_DEBUG, log_buffer);
   return phase;
 }
 
@@ -436,8 +446,6 @@ static void update_moon_image(time_t now) {
     uint32_t resource_id_w = resources_list[a][b];
 
     gbitmap_destroy(b_moon_image);
-    gbitmap_destroy(w_moon_image);
-
     b_moon_image = gbitmap_create_with_resource(resource_id_b);
     b_moon_layer = bitmap_layer_create(GRect(0, 0, 15, 15));
     bitmap_layer_set_bitmap(b_moon_layer, b_moon_image);
@@ -445,6 +453,7 @@ static void update_moon_image(time_t now) {
     bitmap_layer_set_compositing_mode(b_moon_layer, GCompOpAnd);
     layer_add_child(moon_layer, bitmap_layer_get_layer(b_moon_layer));
 
+    gbitmap_destroy(w_moon_image);
     w_moon_image = gbitmap_create_with_resource(resource_id_w);
     w_moon_layer = bitmap_layer_create(GRect(0, 0, 15, 15));
     bitmap_layer_set_bitmap(w_moon_layer, w_moon_image);
@@ -459,8 +468,8 @@ static void update_moon_image(time_t now) {
 static time_t calc_moon_position_time(time_t now) {
   // Caluclate the 'effective time' to place the moon.   0.5 = 12 hours, 0.25 = 6 hours
   double phase = calc_moon_phase(now);
-  double seconds_ahead = (phase * 24.0 * 3600);
-  time_t moontime = (time_t) ((long)now + seconds_ahead);
+  double seconds_behind = (phase * 24.0 * 3600);
+  time_t moontime = (time_t) ((long)now - seconds_behind);
   return moontime;
 }
 
@@ -477,7 +486,15 @@ static void reframe_sun_layer(time_t now) {
 
 static void reframe_moon_layer(time_t now) {
   // Reframe the Sun layer to the correct position.
+  char log_buffer[164];
   time_t moontime = calc_moon_position_time(now);
+  struct tm *moon_tm = localtime(&moontime);
+  strftime(log_buffer, 164, "This moon at %H:%M", moon_tm);
+  APP_LOG(APP_LOG_LEVEL_DEBUG, log_buffer);
+  struct tm *newmoon_tm = localtime(&new_moon);
+  strftime(log_buffer, 164, "New moon at %F", newmoon_tm);
+  APP_LOG(APP_LOG_LEVEL_DEBUG, log_buffer);
+
   GPoint moonLocation = get_point_from_time(moontime);
   const int16_t moonDiameter = layer_get_bounds(moon_layer).size.w;  // replace with definition?
   moonLocation.x = moonLocation.x - (moonDiameter / 2);
@@ -496,25 +513,35 @@ static void minute_tick_handler(struct tm *tick_time, TimeUnits units_changed) {
   // Move the Sun to the correct position.
   reframe_sun_layer(now);
 
-  // Update the moon image.
-  //update_moon_image(now);  // only update img if necessary
-
-  // Move the Moon to the correct position.
-  reframe_moon_layer(now);
-
+  // Update the moon image and move to correct position.
+  if (clean_timezone) {
+    //update_moon_image(now);  // only update img if necessary
+    layer_set_hidden(moon_layer, false);
+    reframe_moon_layer(now);
+  } else {
+    layer_set_hidden(moon_layer, true);
+    //gbitmap_destroy(b_moon_image);  //crashes app (trys to destroy twice?)
+    //gbitmap_destroy(w_moon_image);  //crashes app
+  }
+  
   // Update the current location coordinates. AND timezone!
   //send_int(88, 1);  // 88 is the key that tells the .js file to only check for location.
   //get_location_and_timezone_from_phone()
   //if (succesful and location is changed) {
   if (false) {
-    prev_sunrise_epoch = (time_t) 0;
+    prev_sunrise_epoch = ZERO;
     next_sunrise_epoch = INF;
-    prev_sunset_epoch = (time_t) 0;
+    prev_sunset_epoch = ZERO;
     next_sunset_epoch = INF;
+    clean_timezone = false;
+    timezone_offset = 0;
+    //get_timezone();
   } 
   
   // Get new sunset / rise times every 15 minutes.
-  if(tick_time->tm_min % 15 == 0) {
+  if (prev_sunrise_epoch == ZERO && prev_sunset_epoch == ZERO && next_sunrise_epoch == INF && next_sunset_epoch == INF) {
+    send_int(66, 5);  // 66 is the key that tells the .js file to get sunrise/sunset times (and location).
+  } else if (tick_time->tm_min % 15 == 0) {
     send_int(66, 5);  // 66 is the key that tells the .js file to get sunrise/sunset times (and location).
   }
 
@@ -595,7 +622,7 @@ static void window_load(Window *window) {
   w_moon_layer = bitmap_layer_create(GRect(0, 0, 15, 15));
   bitmap_layer_set_bitmap(w_moon_layer, w_moon_image);
   bitmap_layer_set_background_color(w_moon_layer, GColorClear);
-  bitmap_layer_set_compositing_mode(w_moon_layer, GCompOpAnd);
+  bitmap_layer_set_compositing_mode(w_moon_layer, GCompOpOr);
   layer_add_child(moon_layer, bitmap_layer_get_layer(w_moon_layer));
 
   // Create the text layer to hold the current time.
@@ -617,9 +644,9 @@ static void window_load(Window *window) {
   layer_add_child(window_layer, (Layer*) longitude_text_layer);
 
   // Initialize times and location variables.
-  prev_sunrise_epoch = (time_t) 0;
+  prev_sunrise_epoch = ZERO;
   next_sunrise_epoch = INF;
-  prev_sunset_epoch = (time_t) 0;
+  prev_sunset_epoch = ZERO;
   next_sunset_epoch = INF;
   snprintf(longitude, 32, "N/A");
   snprintf(latitude, 32, "N/A");
