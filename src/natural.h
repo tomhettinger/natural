@@ -38,7 +38,7 @@ image_rotations:
   7 sun at 21
 */
 
-const uint32_t MOON_IDS[8][8][2] = {          // [phase][rotation][color]
+const int MOON_IDS[8][8][2] = {          // [phase][rotation][color]
   {
     {RESOURCE_ID_NEW_B, RESOURCE_ID_NEW_W},
     {RESOURCE_ID_NEW_B, RESOURCE_ID_NEW_W},

@@ -10,12 +10,15 @@
     "watchface": true
   },
   "appKeys": {
-    "temperature": 0,
-    "longitude": 1,
-    "latitude": 2,
-    "sunrise": 3,
-    "sunset": 4,
-    "timezoneOffset": 42
+    "longitude": 0,
+    "latitude": 1,
+    "sunrise": 2,
+    "sunset": 3,
+    "timezoneOffset": 4,
+    "req_timezone": 20,
+    "req_weather": 21,
+    "req_location": 22,   
+    "req_all": 23
   },
   "resources": {
     "media": [
