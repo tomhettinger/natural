@@ -42,7 +42,7 @@ static GBitmap *b_moon_image, *w_moon_image;
 
 static TextLayer *time_text_layer, *next_sunrise_text_layer, *next_sunset_text_layer, *prev_sunrise_text_layer, *prev_sunset_text_layer, *longitude_text_layer, *tz_text_layer;
 
-static char time_buffer[32], sunset_buffer[32], sunrise_buffer[32], latitude[32], longitude[32], tz_status[32];
+static char time_buffer[32], prev_sunset_buffer[32], prev_sunrise_buffer[32], next_sunset_buffer[32], next_sunrise_buffer[32], latitude[32], longitude[32], tz_status[32];
 
 static int current_image_index[2] = {99, 99}; //points to nothing
 static int timezone_offset = 0;
@@ -146,6 +146,83 @@ static void assign_rise_or_set_epoch(time_t incoming_epoch, char *motion, time_t
 }
 
 
+static void update_rise_and_set_epochs(time_t now) {
+  char log_buffer[164];
+
+  // Assertions
+  if (difftime(now, prev_sunrise_epoch)<0) {  // prev_sunrise_epoch <= now
+    snprintf(log_buffer, 164, "ERROR: (prev_sunrise <= now) failed assertion  %d, %d", (int) prev_sunrise_epoch, (int) now);
+    APP_LOG(APP_LOG_LEVEL_DEBUG, log_buffer);
+  }
+  if (difftime(next_sunrise_epoch, prev_sunrise_epoch)<0) {  // prev_sunrise_epoch <= next_sunrise_epoch
+    snprintf(log_buffer, 164, "ERROR: (prev_sunrise <= next_sunrise) failed assertion:  %d, %d", (int) prev_sunrise_epoch, (int) next_sunrise_epoch);
+    APP_LOG(APP_LOG_LEVEL_DEBUG, log_buffer);
+  }
+  if (difftime(now, prev_sunset_epoch)<0) {  //prev_sunset_epoch <= now
+    snprintf(log_buffer, 164, "ERROR: (prev_sunset <= now) failed assertion  %d, %d", (int) prev_sunset_epoch, (int) now);
+    APP_LOG(APP_LOG_LEVEL_DEBUG, log_buffer);
+  }
+  if (difftime(next_sunset_epoch, prev_sunset_epoch)<0) {  // prev_sunset_epoch <= next_sunset_epoch
+    snprintf(log_buffer, 164, "ERROR: (prev_sunset <= next_sunset) failed assertion  %d, %d", (int) prev_sunset_epoch, (int) next_sunset_epoch);
+    APP_LOG(APP_LOG_LEVEL_DEBUG, log_buffer);
+  }
+
+  // If the current time has passed the 'next' rise, set it as the 'prev' rise.
+  if (difftime(now, next_sunrise_epoch)>0) {
+    snprintf(log_buffer, 164, "Current time passed next_sunrise. Moving to prev_sunrise.  %d", (int) next_sunrise_epoch);
+    //APP_LOG(APP_LOG_LEVEL_DEBUG, log_buffer);
+    prev_sunrise_epoch = next_sunrise_epoch;
+    next_sunrise_epoch = (time_t) INF;
+  }
+  if (difftime(now, next_sunset_epoch)>0) {
+    snprintf(log_buffer, 164, "Current time passed next_sunset. Moving to prev_sunrise.  %d", (int) next_sunset_epoch);
+    //APP_LOG(APP_LOG_LEVEL_DEBUG, log_buffer);
+    prev_sunset_epoch = next_sunset_epoch;
+    next_sunset_epoch = (time_t) INF;
+  }
+}
+
+
+static void refresh_rise_and_set_text() {
+  // Update the current 'next_epoch' text layers.
+  if (next_sunrise_epoch != INF) {
+    struct tm *rise_tm = localtime(&next_sunrise_epoch);
+    strftime(next_sunrise_buffer, sizeof("00:00"), "%H:%M", rise_tm);
+    text_layer_set_text(next_sunrise_text_layer, (char*) &next_sunrise_buffer);
+  } else {
+    snprintf(next_sunrise_buffer, sizeof("N/A"), "N/A");
+    text_layer_set_text(next_sunrise_text_layer, (char*) &next_sunrise_buffer);
+  }
+
+  if (next_sunset_epoch != INF) {
+    struct tm *set_tm = localtime(&next_sunset_epoch);
+    strftime(next_sunset_buffer, sizeof("00:00"), "%H:%M", set_tm);
+    text_layer_set_text(next_sunset_text_layer, (char*) &next_sunset_buffer);
+  } else {
+    snprintf(next_sunset_buffer, sizeof("N/A"), "N/A");
+    text_layer_set_text(next_sunset_text_layer, (char*) &next_sunset_buffer);
+  }
+
+  if (prev_sunrise_epoch != ZERO) {
+    struct tm *rise_tm = localtime(&prev_sunrise_epoch);
+    strftime(prev_sunrise_buffer, sizeof("00:00"), "%H:%M", rise_tm);
+    text_layer_set_text(prev_sunrise_text_layer, (char*) &prev_sunrise_buffer);
+  } else {
+    snprintf(prev_sunrise_buffer, sizeof("N/A"), "N/A");
+    text_layer_set_text(prev_sunrise_text_layer, (char*) &prev_sunrise_buffer);
+  }
+  
+  if (prev_sunset_epoch != ZERO) {
+    struct tm *set_tm = localtime(&prev_sunset_epoch);
+    strftime(prev_sunset_buffer, sizeof("00:00"), "%H:%M", set_tm);
+    text_layer_set_text(prev_sunset_text_layer, (char*) &prev_sunset_buffer);
+  } else {
+    snprintf(prev_sunset_buffer, sizeof("N/A"), "N/A");
+    text_layer_set_text(prev_sunset_text_layer, (char*) &prev_sunset_buffer);
+  }
+}
+
+
 /*  COMMUNICATION WITH PHONE
     ------------------------  */
 static void process_tuple(Tuple *tup, time_t now) {
@@ -169,6 +246,7 @@ static void process_tuple(Tuple *tup, time_t now) {
       //}
       //strcpy(longitude, string_value);
       snprintf(longitude, sizeof("ok"), "ok");
+      text_layer_set_text(longitude_text_layer, longitude);
       longitude_missing = false;
       break;
     case KEY_LATITUDE:
@@ -186,16 +264,23 @@ static void process_tuple(Tuple *tup, time_t now) {
     case KEY_SUNRISE:
       if (timezone_missing == false) {
         assign_rise_or_set_epoch((time_t) value-timezone_offset, "rise", now);
+        update_rise_and_set_epochs(now);
+        refresh_rise_and_set_text();
+        layer_mark_dirty(daylight_layer);
       }
       break;
     case KEY_SUNSET:
       if (timezone_missing == false) {
         assign_rise_or_set_epoch((time_t) value-timezone_offset, "set", now);
+        update_rise_and_set_epochs(now);
+        refresh_rise_and_set_text();
+        layer_mark_dirty(daylight_layer);
       }
       break;
     case KEY_TIMEZONE_OFFSET:
       timezone_offset = value;
       snprintf(tz_status, sizeof("ok"), "ok");
+      text_layer_set_text(tz_text_layer, tz_status);
       timezone_missing = false;
       break;
   }
@@ -372,64 +457,6 @@ static void daylight_update_proc(Layer *layer, GContext *ctx) {
 }
 
 
-static void update_rise_and_set_epochs(time_t now) {
-  char log_buffer[164];
-
-  // Assertions
-  if (difftime(now, prev_sunrise_epoch)<0) {  // prev_sunrise_epoch <= now
-    snprintf(log_buffer, 164, "ERROR: (prev_sunrise <= now) failed assertion  %d, %d", (int) prev_sunrise_epoch, (int) now);
-    APP_LOG(APP_LOG_LEVEL_DEBUG, log_buffer);
-  }
-  if (difftime(next_sunrise_epoch, prev_sunrise_epoch)<0) {  // prev_sunrise_epoch <= next_sunrise_epoch
-    snprintf(log_buffer, 164, "ERROR: (prev_sunrise <= next_sunrise) failed assertion:  %d, %d", (int) prev_sunrise_epoch, (int) next_sunrise_epoch);
-    APP_LOG(APP_LOG_LEVEL_DEBUG, log_buffer);
-  }
-  if (difftime(now, prev_sunset_epoch)<0) {  //prev_sunset_epoch <= now
-    snprintf(log_buffer, 164, "ERROR: (prev_sunset <= now) failed assertion  %d, %d", (int) prev_sunset_epoch, (int) now);
-    APP_LOG(APP_LOG_LEVEL_DEBUG, log_buffer);
-  }
-  if (difftime(next_sunset_epoch, prev_sunset_epoch)<0) {  // prev_sunset_epoch <= next_sunset_epoch
-    snprintf(log_buffer, 164, "ERROR: (prev_sunset <= next_sunset) failed assertion  %d, %d", (int) prev_sunset_epoch, (int) next_sunset_epoch);
-    APP_LOG(APP_LOG_LEVEL_DEBUG, log_buffer);
-  }
-
-  // If the current time has passed the 'next' rise, set it as the 'prev' rise.
-  if (difftime(now, next_sunrise_epoch)>0) {
-    snprintf(log_buffer, 164, "Current time passed next_sunrise. Moving to prev_sunrise.  %d", (int) next_sunrise_epoch);
-    //APP_LOG(APP_LOG_LEVEL_DEBUG, log_buffer);
-    prev_sunrise_epoch = next_sunrise_epoch;
-    next_sunrise_epoch = (time_t) INF;
-  }
-  if (difftime(now, next_sunset_epoch)>0) {
-    snprintf(log_buffer, 164, "Current time passed next_sunset. Moving to prev_sunrise.  %d", (int) next_sunset_epoch);
-    //APP_LOG(APP_LOG_LEVEL_DEBUG, log_buffer);
-    prev_sunset_epoch = next_sunset_epoch;
-    next_sunset_epoch = (time_t) INF;
-  }
-}
-
-
-static void refresh_rise_and_set_text() {
-  // Update the current 'next_epoch' text layers.
-  if (next_sunrise_epoch != INF) {
-    struct tm *rise_tm = localtime(&next_sunrise_epoch);
-    strftime(sunrise_buffer, sizeof("00:00"), "%H:%M", rise_tm);
-    text_layer_set_text(next_sunrise_text_layer, (char*) &sunrise_buffer);
-  } else {
-    snprintf(sunrise_buffer, sizeof("N/A"), "N/A");
-    text_layer_set_text(next_sunrise_text_layer, (char*) &sunrise_buffer);
-  }
-  if (next_sunset_epoch != INF) {
-    struct tm *set_tm = localtime(&next_sunset_epoch);
-    strftime(sunset_buffer, sizeof("00:00"), "%H:%M", set_tm);
-    text_layer_set_text(next_sunset_text_layer, (char*) &sunset_buffer);
-  } else {
-    snprintf(sunset_buffer, sizeof("N/A"), "N/A");
-    text_layer_set_text(next_sunset_text_layer, (char*) &sunset_buffer);
-  }
-}
-
-
 static double calc_moon_phase(time_t now) {
   // Calculate the current moon phase from 0 to 1 with 0=new, 0.25=first quarter, and 0.5=full.
   // Must add timezone offset in order to get UT. Uggh.
@@ -472,7 +499,7 @@ static void update_moon_image(time_t now) {
   if (img_rotation == 8) {img_rotation = 0;}
  
   int new_image_index[2] = {img_type, img_rotation};
-  if (new_image_index != current_image_index) {
+  if (new_image_index[0] != current_image_index[0] || new_image_index[1] != current_image_index[1]) {
     snprintf(log_buffer, 164, "setting current_image_index to [%d][%d]", new_image_index[0], new_image_index[1]);
     APP_LOG(APP_LOG_LEVEL_DEBUG, log_buffer);
     current_image_index[0] = new_image_index[0];
@@ -575,16 +602,9 @@ static void minute_tick_handler(struct tm *tick_time, TimeUnits units_changed) {
   }
 
   // Based on current time, move any next_xx to prev_xx as necessary.
+  // These should always be grouped together, or maybe merged into a single function!
   update_rise_and_set_epochs(now);
-
-  // Update the current 'next_epoch' text layers.
   refresh_rise_and_set_text();
-
-  // Update the current lat/long text layers and tz.
-  text_layer_set_text(longitude_text_layer, longitude);
-  text_layer_set_text(tz_text_layer, tz_status);
-
-  // Tell the daylight layer to update itself.
   layer_mark_dirty(daylight_layer);
 }
 
