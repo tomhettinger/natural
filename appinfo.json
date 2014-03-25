@@ -3,22 +3,17 @@
   "shortName": "natural",
   "longName": "natural",
   "companyName": "Thomas Hettinger",
-  "versionCode": 6,
-  "versionLabel": "0.6.0",
+  "versionCode": 7,
+  "versionLabel": "0.7.0",
   "capabilities": [ "location" ],
   "watchapp": {
     "watchface": true
   },
   "appKeys": {
-    "longitude": 0,
-    "latitude": 1,
+    "status": 0,
+    "tzOffset": 1,
     "sunrise": 2,
-    "sunset": 3,
-    "timezoneOffset": 4,
-    "req_timezone": 20,
-    "req_weather": 21,
-    "req_location": 22,   
-    "req_all": 23
+    "sunset": 3
   },
   "resources": {
     "media": [

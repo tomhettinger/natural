@@ -1,5 +1,5 @@
 /*
-Window window
+  Window window
     Layer window_layer
         Layer background_layer
             BitmapLayer(face_bg_white_layer)
@@ -18,12 +18,20 @@ Window window
         Layer TextLayer(prev_sunrise_text_layer)
         Layer TextLayer(prev_sunset_text_layer)
         Layer TextLayer(longitude_text_layer)
-        Layer TextLayer(tz_text_layer)
+        Layer TextLayer(status_text_layer)
 */
 
 #include <pebble.h>
 #include <time.h>
 #include "natural.h"
+
+static const time_t INF = (time_t) 2147483640;      // 7 seconds before 2038 event.
+static const time_t ZERO = (time_t) 0;
+static const time_t INVALID = (time_t)  666;
+static const time_t NEW_MOON = (time_t) 1393678800; // A recent new moon at March 1, 2014 13:00 UT
+static const double LUNAR_CYCLE = 2551442.98;       // In seconds.
+static const time_t TIMEOUT = 900;                  // Seconds between weather checks
+static const time_t ERROR_TIMEOUT = 120;            // Wait time after error before retrying get_weather
 
 static Window *window;
 
@@ -40,39 +48,61 @@ static Layer *moon_layer;
 static BitmapLayer *b_moon_layer, *w_moon_layer;
 static GBitmap *b_moon_image, *w_moon_image;
 
-static TextLayer *time_text_layer, *next_sunrise_text_layer, *next_sunset_text_layer, *prev_sunrise_text_layer, *prev_sunset_text_layer, *longitude_text_layer, *tz_text_layer;
+static TextLayer *time_text_layer, *next_sunrise_text_layer, *next_sunset_text_layer, *prev_sunrise_text_layer, *prev_sunset_text_layer, *longitude_text_layer, *status_text_layer;
 
-static char time_buffer[32], prev_sunset_buffer[32], prev_sunrise_buffer[32], next_sunset_buffer[32], next_sunrise_buffer[32], latitude[32], longitude[32], tz_status[32];
+static char time_buffer[32], prev_sunset_buffer[32], prev_sunrise_buffer[32], next_sunset_buffer[32], next_sunrise_buffer[32], log_buffer[256];
 
-static int current_image_index[2] = {99, 99}; //points to nothing
-static int timezone_offset = 0;
-static bool timezone_missing = true;
-static bool latitude_missing = true;
-static bool longitude_missing = true;
+static int current_image_index[2] = {99, 99};       //points to nothing
+static int timezone_offset = 0;                     // actual epoch - time(NULL)
+static bool timezone_missing = true;                // necessary? for moon_update maybe
+static bool getting_weather = false;                // prevent calling get_weather() twice
+static bool js_ready = false;                       // js ready to receive requests
+static time_t time_stamp = 0;                       // time of last weather check
 static time_t prev_sunrise_epoch, next_sunrise_epoch, prev_sunset_epoch, next_sunset_epoch;
 
-static const time_t INF = (time_t) 2147483640; // 7 seconds before 2038 event.
-static const time_t ZERO = (time_t) 0;
-static const time_t INVALID = (time_t)  666;
-static const time_t new_moon = (time_t) 1393678800;    // A recent new moon at March 1, 2014 13:00 UT
-static const double lunar_cycle = 2551442.98;           // In seconds.
-
-
 enum {
-  KEY_LONGITUDE = 0,
-  KEY_LATITUDE = 1,
+  KEY_STATUS = 0,
+  KEY_TZOFFSET = 1,
   KEY_SUNRISE = 2,
   KEY_SUNSET = 3,
-  KEY_TIMEZONE_OFFSET = 4,
-  KEY_REQ_TIMEZONE = 20,
-  KEY_REQ_WEATHER = 21,
-  KEY_REQ_LOCATION = 22,
-  KEY_REQ_ALL = 23
+  KEY_PREV_SUNRISE = 4,
+  KEY_PREV_SUNSET = 5,
+  KEY_NEXT_SUNRISE = 6,
+  KEY_NEXT_SUNSET = 7,
+  KEY_TIME_STAMP = 8
 };
 
 
+static TextLayer* init_text_layer(GRect location, GColor color, GColor background, const char *res_id, GTextAlignment alignment) {
+  /* Helper function used to initialize any text layer. */
+  TextLayer *layer = text_layer_create(location);
+  text_layer_set_text_color(layer, color);
+  text_layer_set_background_color(layer, background);
+  text_layer_set_font(layer, fonts_get_system_font(res_id));
+  text_layer_set_text_alignment(layer, alignment);
+  return layer;
+}
+
+
+static bool time_to_refresh() {
+  /* Check the current time with time of last check.  Return
+  true if greater than 15 minutes. */
+  time_t time_passed = time(NULL) - time_stamp;
+  if(time_stamp == 0 || time_passed >= TIMEOUT) {
+    return true;
+  } else {
+    return false;
+  }
+}
+
+
+
+
+/*  UPDATE FUNCTIONS
+    ----------------  */
 static GPoint get_point_from_time(time_t epoch) {
-  // Given an epoch, return a GPoint on the clock edge.
+  /* Given an epoch, return a GPoint on the clock edge 
+  at the location of the corresponding time. */
   struct tm *t = localtime(&epoch);
   int hour = t->tm_hour;
   int min = t->tm_min;
@@ -85,106 +115,66 @@ static GPoint get_point_from_time(time_t epoch) {
 }
 
 
-static TextLayer* init_text_layer(GRect location, GColor color, GColor background, const char *res_id, GTextAlignment alignment) {
-  // Helper function used to initialize any text layer.
-  TextLayer *layer = text_layer_create(location);
-  text_layer_set_text_color(layer, color);
-  text_layer_set_background_color(layer, background);
-  text_layer_set_font(layer, fonts_get_system_font(res_id));
-  text_layer_set_text_alignment(layer, alignment);
-  return layer;
+static void reframe_sun_layer(time_t now) {
+  /* Reframe the Sun layer to the correct position. */
+  GPoint sunLocation = get_point_from_time(now);
+  const int16_t sunDiameter = layer_get_bounds(sun_layer).size.w;  // replace with definition?
+  sunLocation.x = sunLocation.x - (sunDiameter / 2);
+  sunLocation.y = sunLocation.y - (sunDiameter / 2);
+  layer_set_frame(sun_layer, GRect(sunLocation.x, sunLocation.y, sunDiameter, sunDiameter));
 }
 
 
 static void assign_rise_or_set_epoch(time_t incoming_epoch, char *motion, time_t now) {
-  /* See where incoming rise/set times fit in.
+  /* Given a rise or set time, determine if it should replace either 'next' or 'prev' values.
   A)   incoming < prev < now < next  Shouldn't happen.  If it does, don't update any times.
   B)   prev < incoming < now < next  Incoming time in past, but more recent than prev. Update prev time.
   C)   prev < now < incoming < next  Incoming time is in the future, but sooner than next. Use incoming.
   D)   prev < now < next < incoming  Incoming time is in the future after next.  Don't update. */
   time_t *prev_epoch;
   time_t *next_epoch;
-  char log_buffer[264];
 
   if (strcmp(motion, "rise") == 0 ) {
-    if (!(difftime(now, prev_sunrise_epoch)>0 && difftime(next_sunrise_epoch, now)>0)) {  // 
-      snprintf(log_buffer, 264, "ERROR: (prev_sunrise <= now <= next_sunrise) failed assertion:  %d, %d, %d", (int) prev_sunrise_epoch, (int) now, (int) next_sunrise_epoch);
-      APP_LOG(APP_LOG_LEVEL_DEBUG, log_buffer);
-    }
     prev_epoch = &prev_sunrise_epoch;
     next_epoch = &next_sunrise_epoch;
   }
   else if (strcmp(motion, "set") == 0 ) {
-    if (!(difftime(now, prev_sunset_epoch)>0 && difftime(next_sunset_epoch, now)>0)) {
-      snprintf(log_buffer, 264, "ERROR: (prev_sunset <= now <= next_sunset) failed assertion  %d, %d, %d", (int) prev_sunset_epoch, (int) now, (int) next_sunset_epoch);
-      APP_LOG(APP_LOG_LEVEL_DEBUG, log_buffer);
-    }
     prev_epoch = &prev_sunset_epoch;
     next_epoch = &next_sunset_epoch;
   }
   else {
-    APP_LOG(APP_LOG_LEVEL_DEBUG, "Warning: Didn't specify rise or set!");
+    APP_LOG(APP_LOG_LEVEL_DEBUG, "PEBBLE: Didn't specify rise or set!");
     return;
   }
 
   if (difftime(*prev_epoch, incoming_epoch)>0) {
-    APP_LOG(APP_LOG_LEVEL_DEBUG, "Incoming time is before all other times.");
+    APP_LOG(APP_LOG_LEVEL_DEBUG, "PEBBLE: 'incoming_epoch' < 'prev'; not using.");
   }
   else if (difftime(incoming_epoch, *prev_epoch)>0 && difftime(now, incoming_epoch)>0) {
-    snprintf(log_buffer, 264, "Setting previous_%s to %d.", motion, (int) incoming_epoch);
-    //APP_LOG(APP_LOG_LEVEL_DEBUG, log_buffer);
     *prev_epoch = incoming_epoch;
   } 
   else if (difftime(incoming_epoch, now)>0 && difftime(*next_epoch, incoming_epoch)>0) {
-    snprintf(log_buffer, 264, "Setting next_%s to %d.", motion, (int) incoming_epoch);
-    //APP_LOG(APP_LOG_LEVEL_DEBUG, log_buffer);
     *next_epoch = incoming_epoch;
   } 
   else if (difftime(incoming_epoch, *next_epoch)>0) {
-    APP_LOG(APP_LOG_LEVEL_DEBUG, "Incoming time is in future, but after current 'next'. Not updating.");
+    APP_LOG(APP_LOG_LEVEL_DEBUG, "PEBBLE: 'incoming_epoch' > 'next'; not using.");
   }
 }
 
 
 static void update_rise_and_set_epochs(time_t now) {
-  char log_buffer[164];
-
-  // Assertions
-  if (difftime(now, prev_sunrise_epoch)<0) {  // prev_sunrise_epoch <= now
-    snprintf(log_buffer, 164, "ERROR: (prev_sunrise <= now) failed assertion  %d, %d", (int) prev_sunrise_epoch, (int) now);
-    APP_LOG(APP_LOG_LEVEL_DEBUG, log_buffer);
-  }
-  if (difftime(next_sunrise_epoch, prev_sunrise_epoch)<0) {  // prev_sunrise_epoch <= next_sunrise_epoch
-    snprintf(log_buffer, 164, "ERROR: (prev_sunrise <= next_sunrise) failed assertion:  %d, %d", (int) prev_sunrise_epoch, (int) next_sunrise_epoch);
-    APP_LOG(APP_LOG_LEVEL_DEBUG, log_buffer);
-  }
-  if (difftime(now, prev_sunset_epoch)<0) {  //prev_sunset_epoch <= now
-    snprintf(log_buffer, 164, "ERROR: (prev_sunset <= now) failed assertion  %d, %d", (int) prev_sunset_epoch, (int) now);
-    APP_LOG(APP_LOG_LEVEL_DEBUG, log_buffer);
-  }
-  if (difftime(next_sunset_epoch, prev_sunset_epoch)<0) {  // prev_sunset_epoch <= next_sunset_epoch
-    snprintf(log_buffer, 164, "ERROR: (prev_sunset <= next_sunset) failed assertion  %d, %d", (int) prev_sunset_epoch, (int) next_sunset_epoch);
-    APP_LOG(APP_LOG_LEVEL_DEBUG, log_buffer);
-  }
-
-  // If the current time has passed the 'next' rise, set it as the 'prev' rise.
+  /* Check to see that 'next' times are still in the future. If not,
+  set them to 'prev' and set 'next' to INF. */
   if (difftime(now, next_sunrise_epoch)>0) {
-    snprintf(log_buffer, 164, "Current time passed next_sunrise. Moving to prev_sunrise.  %d", (int) next_sunrise_epoch);
-    //APP_LOG(APP_LOG_LEVEL_DEBUG, log_buffer);
     prev_sunrise_epoch = next_sunrise_epoch;
     next_sunrise_epoch = (time_t) INF;
   }
   if (difftime(now, next_sunset_epoch)>0) {
-    snprintf(log_buffer, 164, "Current time passed next_sunset. Moving to prev_sunrise.  %d", (int) next_sunset_epoch);
-    //APP_LOG(APP_LOG_LEVEL_DEBUG, log_buffer);
     prev_sunset_epoch = next_sunset_epoch;
     next_sunset_epoch = (time_t) INF;
   }
-}
 
-
-static void refresh_rise_and_set_text() {
-  // Update the current 'next_epoch' text layers.
+  /* Update the rise/set epoch text layers. */
   if (next_sunrise_epoch != INF) {
     struct tm *rise_tm = localtime(&next_sunrise_epoch);
     strftime(next_sunrise_buffer, sizeof("00:00"), "%H:%M", rise_tm);
@@ -223,134 +213,14 @@ static void refresh_rise_and_set_text() {
 }
 
 
-/*  COMMUNICATION WITH PHONE
-    ------------------------  */
-static void process_tuple(Tuple *tup, time_t now) {
-  // Get key
-  int key = tup->key;
-  // Get int value if present
-  int value = tup->value->int32;
-  // Get string value if present
-  char string_value[32];
-  strcpy(string_value, tup->value->cstring);
-
-  switch(key) {
-    case KEY_LONGITUDE:
-      //sscanf(string_value, "%lf", &longitude);   // pebble cant handle float->string or string->float
-      //if (longitude not missing and has changed) {
-        //location_changed = true;
-        //prev_sunrise_epoch = ZERO;
-        //next_sunrise_epoch = INF;
-        //prev_sunset_epoch = ZERO;
-        //next_sunset_epoch = INF;
-      //}
-      //strcpy(longitude, string_value);
-      snprintf(longitude, sizeof("ok"), "ok");
-      text_layer_set_text(longitude_text_layer, longitude);
-      longitude_missing = false;
-      break;
-    case KEY_LATITUDE:
-      //sscanf(string_value, "%lf", &latitude);
-      //if (latitude not missing and has changed) {
-        //location_changed = true;
-        //prev_sunrise_epoch = ZERO;
-        //next_sunrise_epoch = INF;
-        //prev_sunset_epoch = ZERO;
-        //next_sunset_epoch = INF;
-      //}
-      strcpy(latitude, string_value);
-      latitude_missing = false;
-      break;
-    case KEY_SUNRISE:
-      if (timezone_missing == false) {
-        assign_rise_or_set_epoch((time_t) value-timezone_offset, "rise", now);
-        update_rise_and_set_epochs(now);
-        refresh_rise_and_set_text();
-        layer_mark_dirty(daylight_layer);
-      }
-      break;
-    case KEY_SUNSET:
-      if (timezone_missing == false) {
-        assign_rise_or_set_epoch((time_t) value-timezone_offset, "set", now);
-        update_rise_and_set_epochs(now);
-        refresh_rise_and_set_text();
-        layer_mark_dirty(daylight_layer);
-      }
-      break;
-    case KEY_TIMEZONE_OFFSET:
-      timezone_offset = value;
-      snprintf(tz_status, sizeof("ok"), "ok");
-      text_layer_set_text(tz_text_layer, tz_status);
-      timezone_missing = false;
-      break;
-  }
-}
-
-
-static void in_received_handler(DictionaryIterator *iter, void *context) {
-  // This will handle the information handed to the Pebble from the phone's PebbleApp.
-  time_t now = time(NULL);
-  APP_LOG(APP_LOG_LEVEL_DEBUG, "Message received.");
-  // Get data.
-  Tuple *tup = dict_read_first(iter);
-  if (tup) {
-    process_tuple(tup, now);
-  }
-  // Get next.
-  while (tup != NULL) {
-    tup = dict_read_next(iter);
-    if (tup) {
-      process_tuple(tup, now);
-    }
-  }
-}
-
-
-static void in_dropped_handler(AppMessageResult reason, void *context) {
-  APP_LOG(APP_LOG_LEVEL_DEBUG, "App Message Dropped!");
-}
-
-
-static void out_failed_handler(DictionaryIterator *failed, AppMessageResult reason, void *context) {
-  char log_buffer[64];
-  snprintf(log_buffer, 64, "AppMessage Failed to Send: reason %d", (int) reason);
-  APP_LOG(APP_LOG_LEVEL_DEBUG, log_buffer);
-}
-
-
-static void out_sent_handler(DictionaryIterator *sent, void *context) {
-  APP_LOG(APP_LOG_LEVEL_DEBUG, "SendOK");
-}
-
-
-static void send_request(uint8_t key, uint8_t cmd) {
-  // Send a key, cmd tuple of integers to the phone app.
-  //APP_LOG(APP_LOG_LEVEL_DEBUG, "Message Attempting to send.");
-  DictionaryIterator *iter;
-  app_message_outbox_begin(&iter);
-  Tuplet value = TupletInteger(key, cmd);
-  dict_write_tuplet(iter, &value);
-  app_message_outbox_send();
-}
-
-
-/*  UPDATE FUNCTIONS
-    ----------------  */
 static void daylight_update_proc(Layer *layer, GContext *ctx) {
   /* Update the daylight path if both epochs are valid.  If not, draw either a line
   or fill in the face with a solid color. */
-  char log_buffer[264];
-
-  snprintf(log_buffer, 264, "daylight_update_proc()  prev_sunrise=%d,  prev_sunset=%d", (int) prev_sunrise_epoch, (int) prev_sunset_epoch);
-  //APP_LOG(APP_LOG_LEVEL_DEBUG, log_buffer);
-  snprintf(log_buffer, 264, "daylight_update_proc()  next_sunrise=%d, next_sunset=%d", (int) next_sunrise_epoch, (int) next_sunset_epoch);
-  //APP_LOG(APP_LOG_LEVEL_DEBUG, log_buffer);
-
   time_t now = time(NULL);
   time_t this_sunrise_epoch;
   time_t this_sunset_epoch;
 
-  // Decided which times to use.
+  // Decided which rise/set epochs to use (prev or next).
   if (difftime(next_sunrise_epoch, now)<86400) {
     this_sunrise_epoch = next_sunrise_epoch;
   } else if (difftime(now, prev_sunrise_epoch)<86400) {
@@ -366,12 +236,13 @@ static void daylight_update_proc(Layer *layer, GContext *ctx) {
     this_sunset_epoch = INVALID;
   }
 
-  if (this_sunrise_epoch != INVALID && this_sunset_epoch != INVALID) {  
-    /* If we have a valid rise and set within 24 hours, draw
+  /* If we have a valid rise and set within 24 hours, draw
     both sunrise and sunset, creating a day and night side. */
+  if (this_sunrise_epoch != INVALID && this_sunset_epoch != INVALID) {  
     GPoint sunrise_point = get_point_from_time(this_sunrise_epoch);
     GPoint sunset_point = get_point_from_time(this_sunset_epoch);
     
+    // Assumes 00:00 < sunrise < 12:00 and 12:00 < sunset < 24:00 
     GPathInfo info = {
       .num_points = 7,
       .points = (GPoint []) {
@@ -385,37 +256,28 @@ static void daylight_update_proc(Layer *layer, GContext *ctx) {
       }
     };
 
-    snprintf(log_buffer, 264, "Making Path (%d,%d), (%d,%d), (%d,%d), (%d,%d), (%d,%d), (%d,%d), (%d,%d)", 
-      info.points[0].x, info.points[0].y, info.points[1].x, info.points[1].y, info.points[2].x, info.points[2].y,
-      info.points[3].x, info.points[3].y, info.points[4].x, info.points[4].y, info.points[5].x, info.points[5].y,
-      info.points[6].x, info.points[6].y);
-    APP_LOG(APP_LOG_LEVEL_DEBUG, log_buffer);
-
     GPath *new_path_ptr = gpath_create(&info);
     gpath_move_to(new_path_ptr, GPoint(0, 0));
     graphics_context_set_fill_color(ctx, GColorWhite);
     gpath_draw_filled(ctx, new_path_ptr);
     gpath_destroy(new_path_ptr); // Clear the path from RAM.
+  } 
 
-  } else if (difftime(next_sunset_epoch, now)>86400 && next_sunset_epoch != INF && 
-             difftime(next_sunrise_epoch, now)>86400 && next_sunrise_epoch != INF) { 
-    // It is perpetual daylight or nighttime if both rise and set are more than 24h in future.
-    snprintf(log_buffer, 264, "all day or all night: next_sunrise=%d, next_sunset=%d, INF=%d", (int) next_sunrise_epoch, (int) next_sunset_epoch, (int) INF);
+  /* It is perpetual daylight or nighttime if both rise and set are more than 24h in future. */
+  else if (difftime(next_sunset_epoch, now)>86400 && next_sunset_epoch != INF && difftime(next_sunrise_epoch, now)>86400 && next_sunrise_epoch != INF) { 
+    snprintf(log_buffer, 256, "PEBBLE: 24h day/night. next_rise=%d, next_set=%d, INF=%d", (int) next_sunrise_epoch, (int) next_sunset_epoch, (int) INF);
     APP_LOG(APP_LOG_LEVEL_DEBUG, log_buffer);
 
+    // Perpetual night time.  Don't draw a path.
     if (difftime(next_sunset_epoch, next_sunrise_epoch)>0) {
-      // It is perpetual night time.  Don't draw a path.
-      //GPath *new_path_ptr = gpath_create(&FULL_NIGHT_PATH_INFO);
-      //gpath_move_to(new_path_ptr, GPoint(0, 0));
-      //graphics_context_set_fill_color(ctx, GColorWhite);
-      //gpath_draw_filled(ctx, new_path_ptr);
-      //gpath_destroy(new_path_ptr);
       if (difftime(now, prev_sunset_epoch)<86400) {
         // Sunset happened within the last 24 hours, draw a line if you wish.
         // DRAW SUNSET LINE HERE
       }
-    } else if (difftime(next_sunrise_epoch, next_sunset_epoch)>0) {
-      // It is perpetual day time. Draw a full path.
+    } 
+
+    // Perpetual day time. Draw a full path.
+    else if (difftime(next_sunrise_epoch, next_sunset_epoch)>0) {
       GPath *new_path_ptr = gpath_create(&FULL_DAY_PATH_INFO);
       gpath_move_to(new_path_ptr, GPoint(0, 0));
       graphics_context_set_fill_color(ctx, GColorWhite);
@@ -426,28 +288,27 @@ static void daylight_update_proc(Layer *layer, GContext *ctx) {
         // DRAW A SUNRISE LINE HERE
       }
     }
+  } 
 
-  } else if (difftime(now, prev_sunset_epoch)<86400 && prev_sunset_epoch != ZERO &&
-            difftime(next_sunrise_epoch, now)>86400 && next_sunrise_epoch != INF) {
-    /* It is perpetual nighttime since a recent set means the next set must be after next rise, and 
-    the next rise will not happen for a long time. Don't draw the day path.*/
+  /* It is perpetual nighttime since a recent set means the next set must be after next rise, and 
+  the next rise will not happen for a long time. Don't draw the day path.*/
+  else if (difftime(now, prev_sunset_epoch)<86400 && prev_sunset_epoch != ZERO && difftime(next_sunrise_epoch, now)>86400 && next_sunrise_epoch != INF) {
     // DRAW SUNSET LINE HERE
+  } 
 
-  } else if (difftime(now, prev_sunrise_epoch)<86400 && prev_sunrise_epoch != ZERO &&
-            difftime(next_sunset_epoch, now)>86400 && next_sunset_epoch != INF) {
-    /* It is perpetual daytime since a recent rise means the next rise must be after the next set,
-    and the next set will not happen for a long time. Draw full day path.*/
+  /* It is perpetual daytime since a recent rise means the next rise must be after the next set,
+  and the next set will not happen for a long time. Draw full day path.*/
+  else if (difftime(now, prev_sunrise_epoch)<86400 && prev_sunrise_epoch != ZERO && difftime(next_sunset_epoch, now)>86400 && next_sunset_epoch != INF) {
     GPath *new_path_ptr = gpath_create(&FULL_DAY_PATH_INFO);
     gpath_move_to(new_path_ptr, GPoint(0, 0));
     graphics_context_set_fill_color(ctx, GColorWhite);
     gpath_draw_filled(ctx, new_path_ptr);
     gpath_destroy(new_path_ptr);
     // DRAW SUNRISE LINE HERE
+  } 
 
-  } else {
-    // Insufficient information.
-    snprintf(log_buffer, 264, "insufficient info: next_sunrise=%d, next_sunset=%d, INF=%d", (int) next_sunrise_epoch, (int) next_sunset_epoch, (int) INF);
-    //APP_LOG(APP_LOG_LEVEL_DEBUG, log_buffer);
+  /* Insufficient information to determine sky.  Draw day path.*/
+  else {
     GPath *new_path_ptr = gpath_create(&FULL_DAY_PATH_INFO);
     gpath_move_to(new_path_ptr, GPoint(0, 0));
     graphics_context_set_fill_color(ctx, GColorWhite);
@@ -458,19 +319,10 @@ static void daylight_update_proc(Layer *layer, GContext *ctx) {
 
 
 static double calc_moon_phase(time_t now) {
-  // Calculate the current moon phase from 0 to 1 with 0=new, 0.25=first quarter, and 0.5=full.
-  // Must add timezone offset in order to get UT. Uggh.
-  double diff = difftime(now, new_moon) + timezone_offset;
-
-  char log_buffer[164];
-  snprintf(log_buffer, 164, "(int) diff = %d", (int)(diff));
-  //APP_LOG(APP_LOG_LEVEL_DEBUG, log_buffer);
-
-  double phase = diff / lunar_cycle;
+  /* Calculate the current moon phase from 0 to 1.  0=new, 0.25=first quarter, and 0.5=full. */
+  double diff = difftime(now, NEW_MOON) + timezone_offset;
+  double phase = diff / LUNAR_CYCLE;
   phase = phase - (int)phase;
-
-  snprintf(log_buffer, 164, "phase*100 = %d", (int)(phase*100.0));
-  //APP_LOG(APP_LOG_LEVEL_DEBUG, log_buffer);
   return phase;
 }
 
@@ -479,9 +331,6 @@ static void update_moon_image(time_t now) {
   /* Determine the image_type and image_rotation to use. Phase must be in range [0,1].
   Image types:  {0:new, 1:wax_cresc, 2:first_quarter, 3:wax_gibb, 4:full, ..., 7:wan_cresc}
   Rotations are {0:sun_at_00, 1:sun_at_03, 2:sun_at_06, 3:sun_at_09, ...}  */
-  char log_buffer[128];
-  snprintf(log_buffer, 164, "checking moon image");
-  APP_LOG(APP_LOG_LEVEL_DEBUG, log_buffer);
 
   // Determine which image_type to use.
   double phase = calc_moon_phase(now);
@@ -498,10 +347,9 @@ static void update_moon_image(time_t now) {
   int img_rotation = (int) ((rotation+0.0625) / 0.125);
   if (img_rotation == 8) {img_rotation = 0;}
  
+  // If we need it, load in a new image.
   int new_image_index[2] = {img_type, img_rotation};
   if (new_image_index[0] != current_image_index[0] || new_image_index[1] != current_image_index[1]) {
-    snprintf(log_buffer, 164, "setting current_image_index to [%d][%d]", new_image_index[0], new_image_index[1]);
-    APP_LOG(APP_LOG_LEVEL_DEBUG, log_buffer);
     current_image_index[0] = new_image_index[0];
     current_image_index[1] = new_image_index[1];
     int resource_id_b = MOON_IDS[img_type][img_rotation][0];
@@ -530,36 +378,11 @@ static void update_moon_image(time_t now) {
 }
 
 
-static time_t calc_moon_position_time(time_t now) {
-  // Caluclate the 'effective time' to place the moon.   0.5 = 12 hours, 0.25 = 6 hours
+static void reframe_moon_layer(time_t now) {
+  /* Reframe the moon layer to the correct position. */
   double phase = calc_moon_phase(now);
   double seconds_behind = (phase * 24.0 * 3600);
   time_t moontime = (time_t) ((long)now - seconds_behind);
-  return moontime;
-}
-
-
-static void reframe_sun_layer(time_t now) {
-  // Reframe the Sun layer to the correct position.
-  GPoint sunLocation = get_point_from_time(now);
-  const int16_t sunDiameter = layer_get_bounds(sun_layer).size.w;  // replace with definition?
-  sunLocation.x = sunLocation.x - (sunDiameter / 2);
-  sunLocation.y = sunLocation.y - (sunDiameter / 2);
-  layer_set_frame(sun_layer, GRect(sunLocation.x, sunLocation.y, sunDiameter, sunDiameter));
-}
-
-
-static void reframe_moon_layer(time_t now) {
-  // Reframe the Sun layer to the correct position.
-  char log_buffer[164];
-  time_t moontime = calc_moon_position_time(now);
-  struct tm *moon_tm = localtime(&moontime);
-  strftime(log_buffer, 164, "This moon at %H:%M", moon_tm);
-  //APP_LOG(APP_LOG_LEVEL_DEBUG, log_buffer);
-  struct tm *newmoon_tm = localtime(&new_moon);
-  strftime(log_buffer, 164, "New moon at %F", newmoon_tm);
-  //APP_LOG(APP_LOG_LEVEL_DEBUG, log_buffer);
-
   GPoint moonLocation = get_point_from_time(moontime);
   const int16_t moonDiameter = layer_get_bounds(moon_layer).size.w;  // replace with definition?
   moonLocation.x = moonLocation.x - (moonDiameter / 2);
@@ -568,49 +391,168 @@ static void reframe_moon_layer(time_t now) {
 }
 
 
-static void minute_tick_handler(struct tm *tick_time, TimeUnits units_changed) {
+/*  COMMUNICATION WITH PHONE
+    ------------------------  */
+static void get_weather() {
+  if(!getting_weather) {
+    getting_weather = true;
+    text_layer_set_text(status_text_layer, "...");
+    time_stamp = time(NULL) - TIMEOUT;  // Reset time_stamp back to interval to avoid simultanious runs of get_weather
+    DictionaryIterator *iter;
+    app_message_outbox_begin(&iter);
+    Tuplet value = TupletCString(KEY_STATUS, "retrieve");
+    dict_write_tuplet(iter, &value);
+    app_message_outbox_send();
+    }
+}
+
+
+static void out_failed_handler(DictionaryIterator *failed, AppMessageResult reason, void *context) {
+  snprintf(log_buffer, 64, "PEBBLE: Failed to Send: reason %d", (int) reason);
+  APP_LOG(APP_LOG_LEVEL_DEBUG, log_buffer);
+}
+
+
+static void out_sent_handler(DictionaryIterator *sent, void *context) {
+  APP_LOG(APP_LOG_LEVEL_DEBUG, "PEBBLE: Message sent successfully.");
+}
+
+
+static void in_dropped_handler(AppMessageResult reason, void *context) {
+  APP_LOG(APP_LOG_LEVEL_DEBUG, "PEBBLE: App Message Dropped!");
+}
+
+
+static void in_received_handler(DictionaryIterator *message, void *context) {
   time_t now = time(NULL);
-  
+  char *status = (char*)dict_find(message, KEY_STATUS)->value;
 
-  // Update the time on the clock text layer.
-  strftime(time_buffer, sizeof("00:00"), "%H:%M", tick_time);
-  text_layer_set_text(time_text_layer, time_buffer);
+  if(strcmp(status, "ready") == 0) {
+    APP_LOG(APP_LOG_LEVEL_DEBUG, "PEBBLE: Recieved status \"ready\"");
+    js_ready = true;
+    get_weather();
+  } 
 
-  // Move the Sun to the correct position.
-  reframe_sun_layer(now);
+  else if(strcmp(status, "reporting") == 0) {
+    APP_LOG(APP_LOG_LEVEL_DEBUG, "PEBBLE: Recieved status \"reporting\"");
+    getting_weather = false;
+    text_layer_set_text(status_text_layer, "ok");
 
-  // Update as much info as we can.  Check every 15 min or when we dont have the info.
-  struct tm *now_cal;
-  now_cal = localtime(&now);
-  if (now_cal->tm_min % 15 == 0) { //
-    send_request(KEY_REQ_ALL, 1);
-  } else if (latitude_missing || longitude_missing) {
-    send_request(KEY_REQ_ALL, 1);
-  } else if (timezone_missing) {
-    send_request(KEY_REQ_ALL, 1);
-  } else if (prev_sunrise_epoch == ZERO && prev_sunset_epoch == ZERO && next_sunrise_epoch == INF && next_sunset_epoch == INF) {
-    send_request(KEY_REQ_ALL, 1);
-  }
-  
-  // Update the moon image and move to correct position.
-  if (timezone_missing) {
-    layer_set_hidden(moon_layer, true);
-  } else {
+    // Timezone offset and moon
+    timezone_offset = dict_find(message, KEY_TZOFFSET)->value->int32;
+    timezone_missing = false;
     update_moon_image(now);
     reframe_moon_layer(now);
     layer_set_hidden(moon_layer, false);
+
+    // Weather and daylight path
+    int incoming_sunrise = dict_find(message, KEY_SUNRISE)->value->int32;
+    int incoming_sunset = dict_find(message, KEY_SUNSET)->value->int32;
+    assign_rise_or_set_epoch((time_t) incoming_sunrise - timezone_offset, "rise", now);
+    assign_rise_or_set_epoch((time_t) incoming_sunset - timezone_offset, "set", now);
+    update_rise_and_set_epochs(now);
+    layer_mark_dirty(daylight_layer);
+
+    time_stamp = time(NULL);
+  } 
+
+  else if(strcmp(status, "failed") == 0) {
+    getting_weather = false;
+    text_layer_set_text(status_text_layer, "!");
+
+    timezone_offset = dict_find(message, KEY_TZOFFSET)->value->int32;
+    timezone_missing = false;
+    update_moon_image(now);
+    reframe_moon_layer(now);
+    layer_set_hidden(moon_layer, false);
+
+    time_stamp = time(NULL) - (TIMEOUT - ERROR_TIMEOUT);
+  }
+}
+
+
+/*  OTHER
+    -----  */
+static bool data_to_load() {
+  return (
+    persist_exists(KEY_PREV_SUNRISE) &&
+    persist_exists(KEY_NEXT_SUNRISE) &&
+    persist_exists(KEY_PREV_SUNSET) &&
+    persist_exists(KEY_NEXT_SUNSET) &&
+    persist_exists(KEY_TIME_STAMP) &&
+    persist_exists(KEY_TZOFFSET)
+  );
+}
+
+
+static void save_data() {
+  /* Save data to persistent storage if we have it.*/
+  if(!timezone_missing) {
+    APP_LOG(APP_LOG_LEVEL_DEBUG, "PEBBLE: Saving data to persistent storage.");
+    persist_write_int(KEY_PREV_SUNRISE, prev_sunrise_epoch);
+    persist_write_int(KEY_NEXT_SUNRISE, next_sunrise_epoch);
+    persist_write_int(KEY_PREV_SUNSET, prev_sunset_epoch);
+    persist_write_int(KEY_NEXT_SUNSET, next_sunset_epoch);
+    persist_write_int(KEY_TIME_STAMP, time_stamp);
+    persist_write_int(KEY_TZOFFSET, timezone_offset);
+  } else
+    APP_LOG(APP_LOG_LEVEL_DEBUG, "PEBBLE: Some values are empty, not saving.");
+}
+
+
+static void load_data() {
+  /* If there is data saved, then load it.
+  persist_read_string(KEY_SOMETHING, something_buffer, 100); */
+  if(data_to_load()) {
+    time_t now = time(NULL);
+    APP_LOG(APP_LOG_LEVEL_DEBUG, "PEBBLE: Loading data from persistent storage.");
+
+    // Get timezone and update moon.
+    timezone_offset = (int)persist_read_int(KEY_TZOFFSET);
+    timezone_missing = false;
+    update_moon_image(now);
+    reframe_moon_layer(now);
+    layer_set_hidden(moon_layer, false);
+
+    time_stamp  =   (time_t)persist_read_int(KEY_TIME_STAMP);
+
+    // Get rise/set information and update daypath.
+    prev_sunrise_epoch = (time_t)persist_read_int(KEY_PREV_SUNRISE);
+    next_sunrise_epoch = (time_t)persist_read_int(KEY_NEXT_SUNRISE);
+    prev_sunset_epoch = (time_t)persist_read_int(KEY_PREV_SUNSET);
+    next_sunset_epoch = (time_t)persist_read_int(KEY_NEXT_SUNSET);
+    update_rise_and_set_epochs(now);
+    layer_mark_dirty(daylight_layer);
+  }
+}
+
+
+static void minute_tick_handler(struct tm *tick_time, TimeUnits units_changed) {
+  /* Each minute: update clock, move the sun, check weather (if time to), 
+  update moon, update epochs, redraw day path. */
+  time_t now = time(NULL);
+  strftime(time_buffer, sizeof("00:00"), "%H:%M", tick_time);
+  text_layer_set_text(time_text_layer, time_buffer);
+
+  reframe_sun_layer(now);
+
+  if (time_to_refresh() && js_ready) {
+    get_weather();
+  }
+  
+  if (!timezone_missing) {
+    update_moon_image(now);
+    reframe_moon_layer(now);
+    layer_set_hidden(moon_layer, false);
+  } else {
+    layer_set_hidden(moon_layer, true);
   }
 
-  // Based on current time, move any next_xx to prev_xx as necessary.
-  // These should always be grouped together, or maybe merged into a single function!
   update_rise_and_set_epochs(now);
-  refresh_rise_and_set_text();
   layer_mark_dirty(daylight_layer);
 }
 
 
-/*  LOAD AND UNLOAD FUNCTIONS
-    -------------------------  */
 static void window_load(Window *window) {
   Layer *window_layer = window_get_root_layer(window);
   GRect bounds = layer_get_bounds(window_layer);
@@ -659,21 +601,8 @@ static void window_load(Window *window) {
   // Create the moon layer
   moon_layer = layer_create(GRect(0, 0, 15, 15));
   layer_set_frame(moon_layer, GRect(80, 100, 15, 15));
+  layer_set_hidden(moon_layer, true);
   layer_add_child(window_layer, moon_layer);
-
-  b_moon_image = gbitmap_create_with_resource(RESOURCE_ID_DS_B);
-  b_moon_layer = bitmap_layer_create(GRect(0, 0, 15, 15));
-  bitmap_layer_set_bitmap(b_moon_layer, b_moon_image);
-  bitmap_layer_set_background_color(b_moon_layer, GColorClear);
-  bitmap_layer_set_compositing_mode(b_moon_layer, GCompOpAnd);
-  layer_add_child(moon_layer, bitmap_layer_get_layer(b_moon_layer));
-
-  w_moon_image = gbitmap_create_with_resource(RESOURCE_ID_DS_W);
-  w_moon_layer = bitmap_layer_create(GRect(0, 0, 15, 15));
-  bitmap_layer_set_bitmap(w_moon_layer, w_moon_image);
-  bitmap_layer_set_background_color(w_moon_layer, GColorClear);
-  bitmap_layer_set_compositing_mode(w_moon_layer, GCompOpOr);
-  layer_add_child(moon_layer, bitmap_layer_get_layer(w_moon_layer));
 
   // Create the text layer to hold the current time.
   time_text_layer = init_text_layer(GRect(44, 42, 60, 29), GColorBlack, GColorWhite, FONT_KEY_GOTHIC_28_BOLD, GTextAlignmentCenter);
@@ -700,18 +629,18 @@ static void window_load(Window *window) {
   layer_add_child(window_layer, (Layer*) longitude_text_layer);
 
   // Create the text layer for tz offset.
-  tz_text_layer = init_text_layer(GRect(0, 130, 40, 18), GColorWhite, GColorClear, FONT_KEY_GOTHIC_14_BOLD, GTextAlignmentLeft);
-  text_layer_set_text(tz_text_layer, "N/A");
-  layer_add_child(window_layer, (Layer*) tz_text_layer);
+  status_text_layer = init_text_layer(GRect(0, 130, 40, 18), GColorWhite, GColorClear, FONT_KEY_GOTHIC_14_BOLD, GTextAlignmentLeft);
+  text_layer_set_text(status_text_layer, "?");
+  layer_add_child(window_layer, (Layer*) status_text_layer);
 
-  // Initialize times and location variables.
+  // Initialize times
   prev_sunrise_epoch = ZERO;
   next_sunrise_epoch = INF;
   prev_sunset_epoch = ZERO;
   next_sunset_epoch = INF;
-  snprintf(longitude, 32, "N/A");
-  snprintf(latitude, 32, "N/A");
-  snprintf(tz_status, 32, "N/A");
+
+  // Load data from persistent storage
+  load_data();
 
   // Execute the minute handler on window load.
   time_t now = time(NULL);
@@ -721,6 +650,9 @@ static void window_load(Window *window) {
 
 
 static void window_unload(Window *window) {
+  // Save data to persistent storage
+  save_data();
+
   // Destroy TextLayers.
   text_layer_destroy(time_text_layer);
   text_layer_destroy(next_sunrise_text_layer);
@@ -728,8 +660,7 @@ static void window_unload(Window *window) {
   text_layer_destroy(prev_sunrise_text_layer);
   text_layer_destroy(prev_sunset_text_layer);
   text_layer_destroy(longitude_text_layer);
-  text_layer_destroy(tz_text_layer);
-
+  text_layer_destroy(status_text_layer);
 
   // Destroy GBitmaps.
   gbitmap_destroy(b_sun_image);
