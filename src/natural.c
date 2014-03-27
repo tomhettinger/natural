@@ -32,6 +32,7 @@ static const time_t NEW_MOON = (time_t) 1393678800; // A recent new moon at Marc
 static const double LUNAR_CYCLE = 2551442.98;       // In seconds.
 static const time_t TIMEOUT = 900;                  // Seconds between weather checks
 static const time_t ERROR_TIMEOUT = 120;            // Wait time after error before retrying get_weather
+static const bool DEBUG_MODE = false;
 
 static Window *window;
 
@@ -100,7 +101,7 @@ static bool time_to_refresh() {
 
 /*  UPDATE FUNCTIONS
     ----------------  */
-static GPoint get_point_from_time(time_t epoch) {
+static GPoint get_point_from_time(time_t epoch, int radius) {
   /* Given an epoch, return a GPoint on the clock edge 
   at the location of the corresponding time. */
   struct tm *t = localtime(&epoch);
@@ -108,8 +109,8 @@ static GPoint get_point_from_time(time_t epoch) {
   int min = t->tm_min;
   int32_t angle = TRIG_MAX_ANGLE * (hour + 12.0 + (min / 60.0)) / 24.0;
   GPoint newPoint = {
-    .x = (int16_t)(sin_lookup(angle) * (int32_t)RAD / TRIG_MAX_RATIO) + CX,
-    .y = (int16_t)(-cos_lookup(angle) * (int32_t)RAD / TRIG_MAX_RATIO) + CY
+    .x = (int16_t)(sin_lookup(angle) * (int32_t)radius / TRIG_MAX_RATIO) + CX,
+    .y = (int16_t)(-cos_lookup(angle) * (int32_t)radius / TRIG_MAX_RATIO) + CY
   };
   return newPoint;
 }
@@ -117,8 +118,9 @@ static GPoint get_point_from_time(time_t epoch) {
 
 static void reframe_sun_layer(time_t now) {
   /* Reframe the Sun layer to the correct position. */
-  GPoint sunLocation = get_point_from_time(now);
   const int16_t sunDiameter = layer_get_bounds(sun_layer).size.w;  // replace with definition?
+  int sunRingRadius = CLOCK_RAD - (sunDiameter / 2);
+  GPoint sunLocation = get_point_from_time(now, sunRingRadius);
   sunLocation.x = sunLocation.x - (sunDiameter / 2);
   sunLocation.y = sunLocation.y - (sunDiameter / 2);
   layer_set_frame(sun_layer, GRect(sunLocation.x, sunLocation.y, sunDiameter, sunDiameter));
@@ -239,8 +241,8 @@ static void daylight_update_proc(Layer *layer, GContext *ctx) {
   /* If we have a valid rise and set within 24 hours, draw
     both sunrise and sunset, creating a day and night side. */
   if (this_sunrise_epoch != INVALID && this_sunset_epoch != INVALID) {  
-    GPoint sunrise_point = get_point_from_time(this_sunrise_epoch);
-    GPoint sunset_point = get_point_from_time(this_sunset_epoch);
+    GPoint sunrise_point = get_point_from_time(this_sunrise_epoch, CLOCK_RAD);
+    GPoint sunset_point = get_point_from_time(this_sunset_epoch, CLOCK_RAD);
     
     // Assumes 00:00 < sunrise < 12:00 and 12:00 < sunset < 24:00 
     GPathInfo info = {
@@ -359,7 +361,7 @@ static void update_moon_image(time_t now) {
     bitmap_layer_destroy(b_moon_layer);
     gbitmap_destroy(b_moon_image);
     b_moon_image = gbitmap_create_with_resource(resource_id_b);
-    b_moon_layer = bitmap_layer_create(GRect(0, 0, 15, 15));
+    b_moon_layer = bitmap_layer_create(GRect(0, 0, MOON_DIAMETER, MOON_DIAMETER));
     bitmap_layer_set_bitmap(b_moon_layer, b_moon_image);
     bitmap_layer_set_background_color(b_moon_layer, GColorClear);
     bitmap_layer_set_compositing_mode(b_moon_layer, GCompOpAnd);
@@ -369,7 +371,7 @@ static void update_moon_image(time_t now) {
     bitmap_layer_destroy(w_moon_layer);
     gbitmap_destroy(w_moon_image);
     w_moon_image = gbitmap_create_with_resource(resource_id_w);
-    w_moon_layer = bitmap_layer_create(GRect(0, 0, 15, 15));
+    w_moon_layer = bitmap_layer_create(GRect(0, 0, MOON_DIAMETER, MOON_DIAMETER));
     bitmap_layer_set_bitmap(w_moon_layer, w_moon_image);
     bitmap_layer_set_background_color(w_moon_layer, GColorClear);
     bitmap_layer_set_compositing_mode(w_moon_layer, GCompOpOr);
@@ -380,11 +382,12 @@ static void update_moon_image(time_t now) {
 
 static void reframe_moon_layer(time_t now) {
   /* Reframe the moon layer to the correct position. */
+  const int16_t moonDiameter = layer_get_bounds(moon_layer).size.w;  // replace with definition?
+  int moonRingRadius = CLOCK_RAD - (moonDiameter / 2);
   double phase = calc_moon_phase(now);
   double seconds_behind = (phase * 24.0 * 3600);
   time_t moontime = (time_t) ((long)now - seconds_behind);
-  GPoint moonLocation = get_point_from_time(moontime);
-  const int16_t moonDiameter = layer_get_bounds(moon_layer).size.w;  // replace with definition?
+  GPoint moonLocation = get_point_from_time(moontime, moonRingRadius);
   moonLocation.x = moonLocation.x - (moonDiameter / 2);
   moonLocation.y = moonLocation.y - (moonDiameter / 2);
   layer_set_frame(moon_layer, GRect(moonLocation.x, moonLocation.y, moonDiameter, moonDiameter));
@@ -530,6 +533,7 @@ static void load_data() {
 static void minute_tick_handler(struct tm *tick_time, TimeUnits units_changed) {
   /* Each minute: update clock, move the sun, check weather (if time to), 
   update moon, update epochs, redraw day path. */
+  APP_LOG(APP_LOG_LEVEL_DEBUG, "PEBBLE: tick");
   time_t now = time(NULL);
   strftime(time_buffer, sizeof("00:00"), "%H:%M", tick_time);
   text_layer_set_text(time_text_layer, time_buffer);
@@ -580,27 +584,27 @@ static void window_load(Window *window) {
   layer_add_child(background_layer, bitmap_layer_get_layer(b_clockface_layer));
 
   // Create the sun layer
-  sun_layer = layer_create(GRect(0, 0, 19, 19));
-  layer_set_frame(sun_layer, GRect(0, 100, 19, 19));  // Use this to move sun. (x, y, 19, 19)
+  sun_layer = layer_create(GRect(0, 0, SUN_DIAMETER, SUN_DIAMETER));
+  layer_set_frame(sun_layer, GRect(0, 100, SUN_DIAMETER, SUN_DIAMETER));
   layer_add_child(window_layer, sun_layer);
 
   b_sun_image = gbitmap_create_with_resource(RESOURCE_ID_SUN_B);
-  b_sun_layer = bitmap_layer_create(GRect(0, 0, 19, 19));
+  b_sun_layer = bitmap_layer_create(GRect(0, 0, SUN_DIAMETER, SUN_DIAMETER));
   bitmap_layer_set_bitmap(b_sun_layer, b_sun_image);
   bitmap_layer_set_background_color(b_sun_layer, GColorClear);
   bitmap_layer_set_compositing_mode(b_sun_layer, GCompOpAnd);
   layer_add_child(sun_layer, bitmap_layer_get_layer(b_sun_layer));
 
   w_sun_image = gbitmap_create_with_resource(RESOURCE_ID_SUN_W);
-  w_sun_layer = bitmap_layer_create(GRect(0, 0, 19, 19));
+  w_sun_layer = bitmap_layer_create(GRect(0, 0, SUN_DIAMETER, SUN_DIAMETER));
   bitmap_layer_set_bitmap(w_sun_layer, w_sun_image);
   bitmap_layer_set_background_color(w_sun_layer, GColorClear);
   bitmap_layer_set_compositing_mode(w_sun_layer, GCompOpOr);
   layer_add_child(sun_layer, bitmap_layer_get_layer(w_sun_layer));
 
   // Create the moon layer
-  moon_layer = layer_create(GRect(0, 0, 15, 15));
-  layer_set_frame(moon_layer, GRect(80, 100, 15, 15));
+  moon_layer = layer_create(GRect(0, 0, MOON_DIAMETER, MOON_DIAMETER));
+  layer_set_frame(moon_layer, GRect(80, 100, MOON_DIAMETER, MOON_DIAMETER));
   layer_set_hidden(moon_layer, true);
   layer_add_child(window_layer, moon_layer);
 
@@ -627,17 +631,27 @@ static void window_load(Window *window) {
   longitude_text_layer = init_text_layer(GRect(0, 18, 40, 18), GColorWhite, GColorClear, FONT_KEY_GOTHIC_14_BOLD, GTextAlignmentLeft);
   text_layer_set_text(longitude_text_layer, "N/A");
   layer_add_child(window_layer, (Layer*) longitude_text_layer);
-
-  // Create the text layer for tz offset.
+  
+  // Create the text layer for comm status.
   status_text_layer = init_text_layer(GRect(0, 130, 40, 18), GColorWhite, GColorClear, FONT_KEY_GOTHIC_14_BOLD, GTextAlignmentLeft);
   text_layer_set_text(status_text_layer, "?");
   layer_add_child(window_layer, (Layer*) status_text_layer);
-
+  
   // Initialize times
   prev_sunrise_epoch = ZERO;
   next_sunrise_epoch = INF;
   prev_sunset_epoch = ZERO;
   next_sunset_epoch = INF;
+
+  // Hide the debug info if not in debug mode.
+  if (!DEBUG_MODE) {
+    layer_set_hidden((Layer*)next_sunrise_text_layer, true);
+    layer_set_hidden((Layer*)prev_sunrise_text_layer, true);
+    layer_set_hidden((Layer*)next_sunset_text_layer, true);
+    layer_set_hidden((Layer*)prev_sunset_text_layer, true);
+    layer_set_hidden((Layer*)longitude_text_layer, true);
+    layer_set_hidden((Layer*)status_text_layer, true);
+  }
 
   // Load data from persistent storage
   load_data();

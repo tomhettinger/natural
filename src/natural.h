@@ -2,7 +2,9 @@
 #define CY 84
 #define W 144
 #define H 168
-#define RAD 72
+#define CLOCK_RAD 72
+#define SUN_DIAMETER 29
+#define MOON_DIAMETER 21
 
 const GPathInfo FULL_DAY_PATH_INFO = {
   .num_points = 4,
