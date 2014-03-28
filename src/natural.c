@@ -5,6 +5,7 @@
             BitmapLayer(face_bg_white_layer)
             Layer daylight_layer
                 GPath daylight_path
+            Layer TextLayer(time_text_layer)
             BitmapLayer(face_bg_black_layer)
         Layer sun_layer
             BitmapLayer(b_sun_layer)
@@ -12,7 +13,6 @@
         Layer moon_layer
             BitmapLayer(b_moon_layer)
             BitmapLayer(w_moon_layer)
-        Layer TextLayer(time_text_layer)
         Layer TextLayer(next_sunrise_text_layer)
         Layer TextLayer(next_sunset_text_layer)
         Layer TextLayer(prev_sunrise_text_layer)
@@ -49,15 +49,16 @@ static Layer *moon_layer;
 static BitmapLayer *b_moon_layer, *w_moon_layer;
 static GBitmap *b_moon_image, *w_moon_image;
 
-static TextLayer *time_text_layer, *next_sunrise_text_layer, *next_sunset_text_layer, *prev_sunrise_text_layer, *prev_sunset_text_layer, *longitude_text_layer, *status_text_layer;
+static TextLayer *time_text_layer, *next_sunrise_text_layer, *next_sunset_text_layer, *prev_sunrise_text_layer, *prev_sunset_text_layer, *bluetooth_text_layer, *battery_text_layer, *status_text_layer;
 
-static char time_buffer[32], prev_sunset_buffer[32], prev_sunrise_buffer[32], next_sunset_buffer[32], next_sunrise_buffer[32], log_buffer[256];
+static char time_buffer[32], prev_sunset_buffer[32], prev_sunrise_buffer[32], next_sunset_buffer[32], next_sunrise_buffer[32], log_buffer[256], battery_buffer[16];
 
 static int current_image_index[2] = {99, 99};       //points to nothing
 static int timezone_offset = 0;                     // actual epoch - time(NULL)
 static bool timezone_missing = true;                // necessary? for moon_update maybe
 static bool getting_weather = false;                // prevent calling get_weather() twice
 static bool js_ready = false;                       // js ready to receive requests
+static bool bluetooth_connected = false;            // whether or not bluetooth is connected
 static time_t time_stamp = 0;                       // time of last weather check
 static time_t prev_sunrise_epoch, next_sunrise_epoch, prev_sunset_epoch, next_sunset_epoch;
 
@@ -97,6 +98,24 @@ static bool time_to_refresh() {
 }
 
 
+static void battery_handler(BatteryChargeState charge_state) {
+  if (charge_state.is_charging) {
+    snprintf(log_buffer, 32, "PEBBLE: charging");
+    snprintf(battery_buffer, 32, "...");
+  } else {
+    snprintf(log_buffer, 32, "PEBBLE: %d charged", charge_state.charge_percent);
+    snprintf(battery_buffer, 32, "%d", charge_state.charge_percent);
+  }
+  text_layer_set_text(battery_text_layer, battery_buffer);
+  APP_LOG(APP_LOG_LEVEL_DEBUG, log_buffer);
+}
+
+
+static void bluetooth_handler(bool connected) {
+  APP_LOG(APP_LOG_LEVEL_DEBUG, "bluetooth connected=%d", (int) connected);
+  bluetooth_connected = connected;
+  text_layer_set_text(bluetooth_text_layer, connected ? "ok" : "X");
+}
 
 
 /*  UPDATE FUNCTIONS
@@ -119,7 +138,7 @@ static GPoint get_point_from_time(time_t epoch, int radius) {
 static void reframe_sun_layer(time_t now) {
   /* Reframe the Sun layer to the correct position. */
   const int16_t sunDiameter = layer_get_bounds(sun_layer).size.w;  // replace with definition?
-  int sunRingRadius = CLOCK_RAD - (sunDiameter / 2);
+  int sunRingRadius = CLOCK_RAD - 10;
   GPoint sunLocation = get_point_from_time(now, sunRingRadius);
   sunLocation.x = sunLocation.x - (sunDiameter / 2);
   sunLocation.y = sunLocation.y - (sunDiameter / 2);
@@ -381,9 +400,9 @@ static void update_moon_image(time_t now) {
 
 
 static void reframe_moon_layer(time_t now) {
-  /* Reframe the moon layer to the correct position. */
+  /* Reframe the moon layer to the correct position and make it visible.*/
   const int16_t moonDiameter = layer_get_bounds(moon_layer).size.w;  // replace with definition?
-  int moonRingRadius = CLOCK_RAD - (moonDiameter / 2);
+  int moonRingRadius = CLOCK_RAD - 10;
   double phase = calc_moon_phase(now);
   double seconds_behind = (phase * 24.0 * 3600);
   time_t moontime = (time_t) ((long)now - seconds_behind);
@@ -391,6 +410,7 @@ static void reframe_moon_layer(time_t now) {
   moonLocation.x = moonLocation.x - (moonDiameter / 2);
   moonLocation.y = moonLocation.y - (moonDiameter / 2);
   layer_set_frame(moon_layer, GRect(moonLocation.x, moonLocation.y, moonDiameter, moonDiameter));
+  layer_set_hidden(moon_layer, false);
 }
 
 
@@ -446,7 +466,6 @@ static void in_received_handler(DictionaryIterator *message, void *context) {
     timezone_missing = false;
     update_moon_image(now);
     reframe_moon_layer(now);
-    layer_set_hidden(moon_layer, false);
 
     // Weather and daylight path
     int incoming_sunrise = dict_find(message, KEY_SUNRISE)->value->int32;
@@ -460,6 +479,7 @@ static void in_received_handler(DictionaryIterator *message, void *context) {
   } 
 
   else if(strcmp(status, "failed") == 0) {
+    APP_LOG(APP_LOG_LEVEL_DEBUG, "PEBBLE: Recieved status \"failed\"");
     getting_weather = false;
     text_layer_set_text(status_text_layer, "!");
 
@@ -467,7 +487,6 @@ static void in_received_handler(DictionaryIterator *message, void *context) {
     timezone_missing = false;
     update_moon_image(now);
     reframe_moon_layer(now);
-    layer_set_hidden(moon_layer, false);
 
     time_stamp = time(NULL) - (TIMEOUT - ERROR_TIMEOUT);
   }
@@ -515,7 +534,6 @@ static void load_data() {
     timezone_missing = false;
     update_moon_image(now);
     reframe_moon_layer(now);
-    layer_set_hidden(moon_layer, false);
 
     time_stamp  =   (time_t)persist_read_int(KEY_TIME_STAMP);
 
@@ -533,7 +551,7 @@ static void load_data() {
 static void minute_tick_handler(struct tm *tick_time, TimeUnits units_changed) {
   /* Each minute: update clock, move the sun, check weather (if time to), 
   update moon, update epochs, redraw day path. */
-  APP_LOG(APP_LOG_LEVEL_DEBUG, "PEBBLE: tick");
+  APP_LOG(APP_LOG_LEVEL_DEBUG, "PEBBLE: Tick.  bluetooth connected=%d", (int) bluetooth_connected);
   time_t now = time(NULL);
   strftime(time_buffer, sizeof("00:00"), "%H:%M", tick_time);
   text_layer_set_text(time_text_layer, time_buffer);
@@ -547,7 +565,6 @@ static void minute_tick_handler(struct tm *tick_time, TimeUnits units_changed) {
   if (!timezone_missing) {
     update_moon_image(now);
     reframe_moon_layer(now);
-    layer_set_hidden(moon_layer, false);
   } else {
     layer_set_hidden(moon_layer, true);
   }
@@ -575,6 +592,11 @@ static void window_load(Window *window) {
   daylight_layer = layer_create(bounds);
   layer_set_update_proc(daylight_layer, daylight_update_proc);
   layer_add_child(background_layer, daylight_layer);
+
+  // Create the text layer to hold the current time.
+  time_text_layer = init_text_layer(GRect(44, 42, 60, 29), GColorBlack, GColorWhite, FONT_KEY_GOTHIC_28_BOLD, GTextAlignmentCenter);
+  text_layer_set_text(time_text_layer, "N/A");
+  layer_add_child(background_layer, (Layer*) time_text_layer);
 
   b_clockface_image = gbitmap_create_with_resource(RESOURCE_ID_CLOCKFACE_B);
   b_clockface_layer = bitmap_layer_create(bounds);
@@ -607,11 +629,6 @@ static void window_load(Window *window) {
   layer_set_frame(moon_layer, GRect(80, 100, MOON_DIAMETER, MOON_DIAMETER));
   layer_set_hidden(moon_layer, true);
   layer_add_child(window_layer, moon_layer);
-
-  // Create the text layer to hold the current time.
-  time_text_layer = init_text_layer(GRect(44, 42, 60, 29), GColorBlack, GColorWhite, FONT_KEY_GOTHIC_28_BOLD, GTextAlignmentCenter);
-  text_layer_set_text(time_text_layer, "N/A");
-  layer_add_child(window_layer, (Layer*) time_text_layer);
   
   // Create the text layers to hold the sunrise and sunset times.
   next_sunrise_text_layer = init_text_layer(GRect(104, 6, 40, 18), GColorWhite, GColorClear, FONT_KEY_GOTHIC_14_BOLD, GTextAlignmentCenter);
@@ -627,17 +644,29 @@ static void window_load(Window *window) {
   text_layer_set_text(prev_sunset_text_layer, "N/A");
   layer_add_child(window_layer, (Layer*) prev_sunset_text_layer);
 
-  // Create the text layer for coordinates.
-  longitude_text_layer = init_text_layer(GRect(0, 18, 40, 18), GColorWhite, GColorClear, FONT_KEY_GOTHIC_14_BOLD, GTextAlignmentLeft);
-  text_layer_set_text(longitude_text_layer, "N/A");
-  layer_add_child(window_layer, (Layer*) longitude_text_layer);
+  // Create the text layer for bluetooth status.
+  bluetooth_text_layer = init_text_layer(GRect(0, 18, 40, 18), GColorWhite, GColorClear, FONT_KEY_GOTHIC_14_BOLD, GTextAlignmentLeft);
+  bluetooth_connected = bluetooth_connection_service_peek();
+  text_layer_set_text(bluetooth_text_layer, bluetooth_connected ? "ok" : "X");
+  layer_add_child(window_layer, (Layer*) bluetooth_text_layer);
   
+  // Create the text layer for battery status.
+  battery_text_layer = init_text_layer(GRect(104, 130, 40, 18), GColorWhite, GColorClear, FONT_KEY_GOTHIC_14_BOLD, GTextAlignmentRight);
+  BatteryChargeState charge_state = battery_state_service_peek();
+  if (charge_state.is_charging) {
+    snprintf(battery_buffer, sizeof("100"), "...");
+  } else {
+    snprintf(battery_buffer, sizeof("100"), "%d", charge_state.charge_percent);
+  }
+  text_layer_set_text(battery_text_layer, battery_buffer);
+  layer_add_child(window_layer, (Layer*) battery_text_layer);
+ 
   // Create the text layer for comm status.
   status_text_layer = init_text_layer(GRect(0, 130, 40, 18), GColorWhite, GColorClear, FONT_KEY_GOTHIC_14_BOLD, GTextAlignmentLeft);
   text_layer_set_text(status_text_layer, "?");
   layer_add_child(window_layer, (Layer*) status_text_layer);
-  
-  // Initialize times
+
+  // Initialize times and bluetooth status
   prev_sunrise_epoch = ZERO;
   next_sunrise_epoch = INF;
   prev_sunset_epoch = ZERO;
@@ -649,8 +678,6 @@ static void window_load(Window *window) {
     layer_set_hidden((Layer*)prev_sunrise_text_layer, true);
     layer_set_hidden((Layer*)next_sunset_text_layer, true);
     layer_set_hidden((Layer*)prev_sunset_text_layer, true);
-    layer_set_hidden((Layer*)longitude_text_layer, true);
-    layer_set_hidden((Layer*)status_text_layer, true);
   }
 
   // Load data from persistent storage
@@ -673,8 +700,9 @@ static void window_unload(Window *window) {
   text_layer_destroy(next_sunset_text_layer);
   text_layer_destroy(prev_sunrise_text_layer);
   text_layer_destroy(prev_sunset_text_layer);
-  text_layer_destroy(longitude_text_layer);
+  text_layer_destroy(bluetooth_text_layer);
   text_layer_destroy(status_text_layer);
+  text_layer_destroy(battery_text_layer);
 
   // Destroy GBitmaps.
   gbitmap_destroy(b_sun_image);
@@ -715,8 +743,10 @@ static void init(void) {
   app_message_register_outbox_sent(out_sent_handler);
   app_message_open(256, 256);  // Large input and output buffer sizes
 
-  // Subscribe to 'minute' events.
+  // Subscribe to 'minute' events and 'bluetooth' events.
   tick_timer_service_subscribe(MINUTE_UNIT, (TickHandler) minute_tick_handler);
+  bluetooth_connection_service_subscribe(bluetooth_handler);
+  battery_state_service_subscribe(battery_handler);
 
   window_stack_push(window, true);
 }
@@ -725,6 +755,8 @@ static void init(void) {
 static void deinit(void) {
   window_destroy(window);
   tick_timer_service_unsubscribe();
+  bluetooth_connection_service_unsubscribe();
+  battery_state_service_unsubscribe();
 }
 
 
