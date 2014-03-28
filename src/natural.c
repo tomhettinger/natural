@@ -18,7 +18,6 @@
         Layer TextLayer(prev_sunrise_text_layer)
         Layer TextLayer(prev_sunset_text_layer)
         Layer BitmapLayer(noti_layer)
-        Layer BitmapLayer(bluetooth_layer)  //getting rid of this to merge with noti_layer
         Layer BitmapLayer(battery_layer)
 */
 
@@ -51,17 +50,15 @@ static BitmapLayer *b_moon_layer, *w_moon_layer;
 static GBitmap *b_moon_image, *w_moon_image;
 
 static BitmapLayer *noti_layer;
-static BitmapLayer *bluetooth_layer;
+static GBitmap *refresh_image, *error_image, *empty_image, *no_bluetooth_image;
 static BitmapLayer *battery_layer;
-static GBitmap *refresh_image, *error_image, *empty_image;
-static GBitmap *no_bluetooth_image;
 static GBitmap *batt_100_image, *batt_80_image, *batt_60_image, *batt_40_image, *batt_20_image, *batt_10_image, *batt_charge_image;
 
 static TextLayer *time_text_layer, *next_sunrise_text_layer, *next_sunset_text_layer, *prev_sunrise_text_layer, *prev_sunset_text_layer;
 
 static char time_buffer[32], prev_sunset_buffer[32], prev_sunrise_buffer[32], next_sunset_buffer[32], next_sunrise_buffer[32], log_buffer[256];
 
-static int current_image_index[2] = {99, 99};       //points to nothing
+static int current_image_index[2] = {99, 99};       // points to nothing
 static int timezone_offset = 0;                     // actual epoch - time(NULL)
 static bool timezone_missing = true;                // necessary? for moon_update maybe
 static bool getting_weather = false;                // prevent calling get_weather() twice
@@ -669,19 +666,12 @@ static void window_load(Window *window) {
   refresh_image = gbitmap_create_with_resource(RESOURCE_ID_REFRESH);
   error_image = gbitmap_create_with_resource(RESOURCE_ID_ERROR);
   empty_image = gbitmap_create_with_resource(RESOURCE_ID_EMPTY);
+  no_bluetooth_image = gbitmap_create_with_resource(RESOURCE_ID_NO_BLUETOOTH);
   noti_layer = bitmap_layer_create(layer_get_frame(window_layer));
   bitmap_layer_set_background_color(noti_layer, GColorClear);
   layer_add_child(window_layer, bitmap_layer_get_layer(noti_layer));
   layer_set_frame(bitmap_layer_get_layer(noti_layer), GRect(4, 4, NOTI_W, NOTI_H));
   layer_set_bounds(bitmap_layer_get_layer(noti_layer), GRect(0, 0, NOTI_W, NOTI_H));
-
-  // Create the layer for bluetooth status.
-  no_bluetooth_image = gbitmap_create_with_resource(RESOURCE_ID_NO_BLUETOOTH);
-  bluetooth_layer = bitmap_layer_create(layer_get_frame(window_layer));
-  bitmap_layer_set_background_color(bluetooth_layer, GColorClear);
-  layer_add_child(window_layer, bitmap_layer_get_layer(bluetooth_layer));
-  layer_set_frame(bitmap_layer_get_layer(bluetooth_layer), GRect(0, 130, NOTI_W, NOTI_H));
-  layer_set_bounds(bitmap_layer_get_layer(bluetooth_layer), GRect(0, 0, NOTI_W, NOTI_H));
   bluetooth_handler(bluetooth_connection_service_peek());
 
   // Create the layer for battery status.
@@ -761,7 +751,6 @@ static void window_unload(Window *window) {
   bitmap_layer_destroy(b_clockface_layer);
   bitmap_layer_destroy(w_clockface_layer);
   bitmap_layer_destroy(noti_layer);
-  bitmap_layer_destroy(bluetooth_layer);
   bitmap_layer_destroy(battery_layer);
 
   // Destroy Layers.
