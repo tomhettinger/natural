@@ -19,6 +19,61 @@
     "media": [
       {
         "type": "png",
+        "name": "NO_BLUETOOTH",
+        "file": "images/no_bluetooth.png"
+      },
+      {
+        "type": "png",
+        "name": "REFRESH",
+        "file": "images/refresh.png"
+      },
+      {
+        "type": "png",
+        "name": "EMPTY",
+        "file": "images/empty.png"
+      },
+      {
+        "type": "png",
+        "name": "ERROR",
+        "file": "images/error.png"
+      },
+      {
+        "type": "png",
+        "name": "BATT_100",
+        "file": "images/battery/batt_100.png"
+      },
+      {
+        "type": "png",
+        "name": "BATT_80",
+        "file": "images/battery/batt_80.png"
+      },
+      {
+        "type": "png",
+        "name": "BATT_60",
+        "file": "images/battery/batt_60.png"
+      },
+      {
+        "type": "png",
+        "name": "BATT_40",
+        "file": "images/battery/batt_40.png"
+      },
+      {
+        "type": "png",
+        "name": "BATT_20",
+        "file": "images/battery/batt_20.png"
+      },
+      {
+        "type": "png",
+        "name": "BATT_10",
+        "file": "images/battery/batt_10.png"
+      },
+      {
+        "type": "png",
+        "name": "BATT_CHARGE",
+        "file": "images/battery/batt_charge.png"
+      },
+      {
+        "type": "png",
         "name": "CLOCKFACE_B",
         "file": "images/face_bg_black.png"
       },

@@ -5,6 +5,10 @@
 #define CLOCK_RAD 72
 #define SUN_DIAMETER 29
 #define MOON_DIAMETER 21
+#define NOTI_W 20
+#define NOTI_H 20
+#define BATT_W 20
+#define BATT_H 8
 
 const GPathInfo FULL_DAY_PATH_INFO = {
   .num_points = 4,

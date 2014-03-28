@@ -17,8 +17,9 @@
         Layer TextLayer(next_sunset_text_layer)
         Layer TextLayer(prev_sunrise_text_layer)
         Layer TextLayer(prev_sunset_text_layer)
-        Layer TextLayer(longitude_text_layer)
-        Layer TextLayer(status_text_layer)
+        Layer BitmapLayer(noti_layer)
+        Layer BitmapLayer(bluetooth_layer)  //getting rid of this to merge with noti_layer
+        Layer BitmapLayer(battery_layer)
 */
 
 #include <pebble.h>
@@ -49,9 +50,16 @@ static Layer *moon_layer;
 static BitmapLayer *b_moon_layer, *w_moon_layer;
 static GBitmap *b_moon_image, *w_moon_image;
 
-static TextLayer *time_text_layer, *next_sunrise_text_layer, *next_sunset_text_layer, *prev_sunrise_text_layer, *prev_sunset_text_layer, *bluetooth_text_layer, *battery_text_layer, *status_text_layer;
+static BitmapLayer *noti_layer;
+static BitmapLayer *bluetooth_layer;
+static BitmapLayer *battery_layer;
+static GBitmap *refresh_image, *error_image, *empty_image;
+static GBitmap *no_bluetooth_image;
+static GBitmap *batt_100_image, *batt_80_image, *batt_60_image, *batt_40_image, *batt_20_image, *batt_10_image, *batt_charge_image;
 
-static char time_buffer[32], prev_sunset_buffer[32], prev_sunrise_buffer[32], next_sunset_buffer[32], next_sunrise_buffer[32], log_buffer[256], battery_buffer[16];
+static TextLayer *time_text_layer, *next_sunrise_text_layer, *next_sunset_text_layer, *prev_sunrise_text_layer, *prev_sunset_text_layer;
+
+static char time_buffer[32], prev_sunset_buffer[32], prev_sunrise_buffer[32], next_sunset_buffer[32], next_sunrise_buffer[32], log_buffer[256];
 
 static int current_image_index[2] = {99, 99};       //points to nothing
 static int timezone_offset = 0;                     // actual epoch - time(NULL)
@@ -101,12 +109,17 @@ static bool time_to_refresh() {
 static void battery_handler(BatteryChargeState charge_state) {
   if (charge_state.is_charging) {
     snprintf(log_buffer, 32, "PEBBLE: charging");
-    snprintf(battery_buffer, 32, "...");
+    bitmap_layer_set_bitmap(battery_layer, batt_charge_image);
   } else {
-    snprintf(log_buffer, 32, "PEBBLE: %d charged", charge_state.charge_percent);
-    snprintf(battery_buffer, 32, "%d", charge_state.charge_percent);
+    int percentage = charge_state.charge_percent;
+    snprintf(log_buffer, 32, "PEBBLE: %d charged", percentage);
+    if (percentage >= 90) bitmap_layer_set_bitmap(battery_layer, batt_100_image);
+    else if (percentage < 80 && percentage >= 60) bitmap_layer_set_bitmap(battery_layer, batt_80_image);
+    else if (percentage < 60 && percentage >= 40) bitmap_layer_set_bitmap(battery_layer, batt_60_image);
+    else if (percentage < 40 && percentage >= 20) bitmap_layer_set_bitmap(battery_layer, batt_40_image);
+    else if (percentage < 20 && percentage >= 10) bitmap_layer_set_bitmap(battery_layer, batt_20_image);
+    else if (percentage < 10) bitmap_layer_set_bitmap(battery_layer, batt_10_image);
   }
-  text_layer_set_text(battery_text_layer, battery_buffer);
   APP_LOG(APP_LOG_LEVEL_DEBUG, log_buffer);
 }
 
@@ -114,7 +127,13 @@ static void battery_handler(BatteryChargeState charge_state) {
 static void bluetooth_handler(bool connected) {
   APP_LOG(APP_LOG_LEVEL_DEBUG, "bluetooth connected=%d", (int) connected);
   bluetooth_connected = connected;
-  text_layer_set_text(bluetooth_text_layer, connected ? "ok" : "X");
+  if (!connected) {
+    getting_weather = false;
+    bitmap_layer_set_bitmap(noti_layer, no_bluetooth_image);
+  } 
+  else if (connected) {
+    bitmap_layer_set_bitmap(noti_layer, empty_image);
+  }
 }
 
 
@@ -419,7 +438,7 @@ static void reframe_moon_layer(time_t now) {
 static void get_weather() {
   if(!getting_weather) {
     getting_weather = true;
-    text_layer_set_text(status_text_layer, "...");
+    bitmap_layer_set_bitmap(noti_layer, refresh_image);
     time_stamp = time(NULL) - TIMEOUT;  // Reset time_stamp back to interval to avoid simultanious runs of get_weather
     DictionaryIterator *iter;
     app_message_outbox_begin(&iter);
@@ -447,19 +466,21 @@ static void in_dropped_handler(AppMessageResult reason, void *context) {
 
 
 static void in_received_handler(DictionaryIterator *message, void *context) {
+  APP_LOG(APP_LOG_LEVEL_DEBUG, "PEBBLE: call to in_received_handler");
   time_t now = time(NULL);
   char *status = (char*)dict_find(message, KEY_STATUS)->value;
 
   if(strcmp(status, "ready") == 0) {
     APP_LOG(APP_LOG_LEVEL_DEBUG, "PEBBLE: Recieved status \"ready\"");
     js_ready = true;
+    bitmap_layer_set_bitmap(noti_layer, empty_image);
     get_weather();
   } 
 
   else if(strcmp(status, "reporting") == 0) {
     APP_LOG(APP_LOG_LEVEL_DEBUG, "PEBBLE: Recieved status \"reporting\"");
     getting_weather = false;
-    text_layer_set_text(status_text_layer, "ok");
+    bitmap_layer_set_bitmap(noti_layer, empty_image);
 
     // Timezone offset and moon
     timezone_offset = dict_find(message, KEY_TZOFFSET)->value->int32;
@@ -481,7 +502,7 @@ static void in_received_handler(DictionaryIterator *message, void *context) {
   else if(strcmp(status, "failed") == 0) {
     APP_LOG(APP_LOG_LEVEL_DEBUG, "PEBBLE: Recieved status \"failed\"");
     getting_weather = false;
-    text_layer_set_text(status_text_layer, "!");
+    bitmap_layer_set_bitmap(noti_layer, error_image);
 
     timezone_offset = dict_find(message, KEY_TZOFFSET)->value->int32;
     timezone_missing = false;
@@ -551,7 +572,7 @@ static void load_data() {
 static void minute_tick_handler(struct tm *tick_time, TimeUnits units_changed) {
   /* Each minute: update clock, move the sun, check weather (if time to), 
   update moon, update epochs, redraw day path. */
-  APP_LOG(APP_LOG_LEVEL_DEBUG, "PEBBLE: Tick.  bluetooth connected=%d", (int) bluetooth_connected);
+  APP_LOG(APP_LOG_LEVEL_DEBUG, "PEBBLE: Tick");
   time_t now = time(NULL);
   strftime(time_buffer, sizeof("00:00"), "%H:%M", tick_time);
   text_layer_set_text(time_text_layer, time_buffer);
@@ -644,29 +665,41 @@ static void window_load(Window *window) {
   text_layer_set_text(prev_sunset_text_layer, "N/A");
   layer_add_child(window_layer, (Layer*) prev_sunset_text_layer);
 
-  // Create the text layer for bluetooth status.
-  bluetooth_text_layer = init_text_layer(GRect(0, 18, 40, 18), GColorWhite, GColorClear, FONT_KEY_GOTHIC_14_BOLD, GTextAlignmentLeft);
-  bluetooth_connected = bluetooth_connection_service_peek();
-  text_layer_set_text(bluetooth_text_layer, bluetooth_connected ? "ok" : "X");
-  layer_add_child(window_layer, (Layer*) bluetooth_text_layer);
-  
-  // Create the text layer for battery status.
-  battery_text_layer = init_text_layer(GRect(104, 130, 40, 18), GColorWhite, GColorClear, FONT_KEY_GOTHIC_14_BOLD, GTextAlignmentRight);
-  BatteryChargeState charge_state = battery_state_service_peek();
-  if (charge_state.is_charging) {
-    snprintf(battery_buffer, sizeof("100"), "...");
-  } else {
-    snprintf(battery_buffer, sizeof("100"), "%d", charge_state.charge_percent);
-  }
-  text_layer_set_text(battery_text_layer, battery_buffer);
-  layer_add_child(window_layer, (Layer*) battery_text_layer);
- 
-  // Create the text layer for comm status.
-  status_text_layer = init_text_layer(GRect(0, 130, 40, 18), GColorWhite, GColorClear, FONT_KEY_GOTHIC_14_BOLD, GTextAlignmentLeft);
-  text_layer_set_text(status_text_layer, "?");
-  layer_add_child(window_layer, (Layer*) status_text_layer);
+  // Create the notification layer.
+  refresh_image = gbitmap_create_with_resource(RESOURCE_ID_REFRESH);
+  error_image = gbitmap_create_with_resource(RESOURCE_ID_ERROR);
+  empty_image = gbitmap_create_with_resource(RESOURCE_ID_EMPTY);
+  noti_layer = bitmap_layer_create(layer_get_frame(window_layer));
+  bitmap_layer_set_background_color(noti_layer, GColorClear);
+  layer_add_child(window_layer, bitmap_layer_get_layer(noti_layer));
+  layer_set_frame(bitmap_layer_get_layer(noti_layer), GRect(4, 4, NOTI_W, NOTI_H));
+  layer_set_bounds(bitmap_layer_get_layer(noti_layer), GRect(0, 0, NOTI_W, NOTI_H));
 
-  // Initialize times and bluetooth status
+  // Create the layer for bluetooth status.
+  no_bluetooth_image = gbitmap_create_with_resource(RESOURCE_ID_NO_BLUETOOTH);
+  bluetooth_layer = bitmap_layer_create(layer_get_frame(window_layer));
+  bitmap_layer_set_background_color(bluetooth_layer, GColorClear);
+  layer_add_child(window_layer, bitmap_layer_get_layer(bluetooth_layer));
+  layer_set_frame(bitmap_layer_get_layer(bluetooth_layer), GRect(0, 130, NOTI_W, NOTI_H));
+  layer_set_bounds(bitmap_layer_get_layer(bluetooth_layer), GRect(0, 0, NOTI_W, NOTI_H));
+  bluetooth_handler(bluetooth_connection_service_peek());
+
+  // Create the layer for battery status.
+  batt_10_image = gbitmap_create_with_resource(RESOURCE_ID_BATT_10);
+  batt_20_image = gbitmap_create_with_resource(RESOURCE_ID_BATT_20);
+  batt_40_image = gbitmap_create_with_resource(RESOURCE_ID_BATT_40);
+  batt_60_image = gbitmap_create_with_resource(RESOURCE_ID_BATT_60);
+  batt_80_image = gbitmap_create_with_resource(RESOURCE_ID_BATT_80);
+  batt_100_image = gbitmap_create_with_resource(RESOURCE_ID_BATT_100);
+  batt_charge_image = gbitmap_create_with_resource(RESOURCE_ID_BATT_CHARGE);
+  battery_layer = bitmap_layer_create(layer_get_frame(window_layer));
+  bitmap_layer_set_background_color(battery_layer, GColorClear);
+  layer_add_child(window_layer, bitmap_layer_get_layer(battery_layer));
+  layer_set_frame(bitmap_layer_get_layer(battery_layer), GRect(120, 152, BATT_W, BATT_H));
+  layer_set_bounds(bitmap_layer_get_layer(battery_layer), GRect(0, 0, BATT_W, BATT_H));
+  battery_handler(battery_state_service_peek());
+  
+  // Initialize times
   prev_sunrise_epoch = ZERO;
   next_sunrise_epoch = INF;
   prev_sunset_epoch = ZERO;
@@ -700,9 +733,6 @@ static void window_unload(Window *window) {
   text_layer_destroy(next_sunset_text_layer);
   text_layer_destroy(prev_sunrise_text_layer);
   text_layer_destroy(prev_sunset_text_layer);
-  text_layer_destroy(bluetooth_text_layer);
-  text_layer_destroy(status_text_layer);
-  text_layer_destroy(battery_text_layer);
 
   // Destroy GBitmaps.
   gbitmap_destroy(b_sun_image);
@@ -711,6 +741,17 @@ static void window_unload(Window *window) {
   gbitmap_destroy(w_moon_image);
   gbitmap_destroy(b_clockface_image);
   gbitmap_destroy(w_clockface_image);
+  gbitmap_destroy(refresh_image);
+  gbitmap_destroy(error_image);
+  gbitmap_destroy(empty_image);
+  gbitmap_destroy(no_bluetooth_image);
+  gbitmap_destroy(batt_10_image);
+  gbitmap_destroy(batt_20_image);
+  gbitmap_destroy(batt_40_image);
+  gbitmap_destroy(batt_60_image);
+  gbitmap_destroy(batt_80_image);
+  gbitmap_destroy(batt_100_image);
+  gbitmap_destroy(batt_charge_image);
 
   // Destroy BitmapLayrs.
   bitmap_layer_destroy(b_sun_layer);
@@ -719,6 +760,9 @@ static void window_unload(Window *window) {
   bitmap_layer_destroy(w_moon_layer);
   bitmap_layer_destroy(b_clockface_layer);
   bitmap_layer_destroy(w_clockface_layer);
+  bitmap_layer_destroy(noti_layer);
+  bitmap_layer_destroy(bluetooth_layer);
+  bitmap_layer_destroy(battery_layer);
 
   // Destroy Layers.
   layer_destroy(sun_layer);
