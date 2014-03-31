@@ -13,7 +13,8 @@
     "status": 0,
     "tzOffset": 1,
     "sunrise": 2,
-    "sunset": 3
+    "sunset": 3,
+    "temperature": 4
   },
   "resources": {
     "media": [

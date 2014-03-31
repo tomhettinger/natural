@@ -52,10 +52,11 @@ function locationSuccess(location) {
                     Pebble.sendAppMessage( {"status": "failed", "tzOffset": tzOffset} );
                     return;
                 }
+                var temperature = Math.round(response.main.temp - 273.15);
                 var sunrise = response.sys.sunrise;
                 var sunset = response.sys.sunset;
                 console.log("JS: Sending weather...");
-                Pebble.sendAppMessage( {"status": "reporting", "sunrise": sunrise, "sunset": sunset, "tzOffset": tzOffset} );
+                Pebble.sendAppMessage( {"status": "reporting", "sunrise": sunrise, "sunset": sunset, "temperature": temperature, "tzOffset": tzOffset} );
             }
 
             else {

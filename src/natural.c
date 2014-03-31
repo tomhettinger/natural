@@ -54,17 +54,19 @@ static GBitmap *refresh_image, *error_image, *empty_image, *no_bluetooth_image;
 static BitmapLayer *battery_layer;
 static GBitmap *batt_100_image, *batt_80_image, *batt_60_image, *batt_40_image, *batt_20_image, *batt_10_image, *batt_charge_image;
 
-static TextLayer *time_text_layer, *next_sunrise_text_layer, *next_sunset_text_layer, *prev_sunrise_text_layer, *prev_sunset_text_layer;
+static TextLayer *time_text_layer, *date_text_layer, *temp_text_layer;
 
-static char time_buffer[32], prev_sunset_buffer[32], prev_sunrise_buffer[32], next_sunset_buffer[32], next_sunrise_buffer[32], log_buffer[256];
+static char time_buffer[16], date_buffer[16], temp_buffer[16], log_buffer[256];
 
 static int current_image_index[2] = {99, 99};       // points to nothing
 static int timezone_offset = 0;                     // actual epoch - time(NULL)
+static int temperature = -999;                      // current temp
 static bool timezone_missing = true;                // necessary? for moon_update maybe
 static bool getting_weather = false;                // prevent calling get_weather() twice
 static bool js_ready = false;                       // js ready to receive requests
 static bool bluetooth_connected = false;            // whether or not bluetooth is connected
 static time_t time_stamp = 0;                       // time of last weather check
+static time_t temp_time_stamp = 0;                  // time that temperature was last received
 static time_t prev_sunrise_epoch, next_sunrise_epoch, prev_sunset_epoch, next_sunset_epoch;
 
 enum {
@@ -72,11 +74,13 @@ enum {
   KEY_TZOFFSET = 1,
   KEY_SUNRISE = 2,
   KEY_SUNSET = 3,
-  KEY_PREV_SUNRISE = 4,
-  KEY_PREV_SUNSET = 5,
-  KEY_NEXT_SUNRISE = 6,
-  KEY_NEXT_SUNSET = 7,
-  KEY_TIME_STAMP = 8
+  KEY_TEMPERATURE = 4,
+  KEY_PREV_SUNRISE = 5,
+  KEY_PREV_SUNSET = 6,
+  KEY_NEXT_SUNRISE = 7,
+  KEY_NEXT_SUNSET = 8,
+  KEY_TIME_STAMP = 9,
+  KEY_TEMP_TIME_STAMP = 10
 };
 
 
@@ -209,43 +213,6 @@ static void update_rise_and_set_epochs(time_t now) {
   if (difftime(now, next_sunset_epoch)>0) {
     prev_sunset_epoch = next_sunset_epoch;
     next_sunset_epoch = (time_t) INF;
-  }
-
-  /* Update the rise/set epoch text layers. */
-  if (next_sunrise_epoch != INF) {
-    struct tm *rise_tm = localtime(&next_sunrise_epoch);
-    strftime(next_sunrise_buffer, sizeof("00:00"), "%H:%M", rise_tm);
-    text_layer_set_text(next_sunrise_text_layer, (char*) &next_sunrise_buffer);
-  } else {
-    snprintf(next_sunrise_buffer, sizeof("N/A"), "N/A");
-    text_layer_set_text(next_sunrise_text_layer, (char*) &next_sunrise_buffer);
-  }
-
-  if (next_sunset_epoch != INF) {
-    struct tm *set_tm = localtime(&next_sunset_epoch);
-    strftime(next_sunset_buffer, sizeof("00:00"), "%H:%M", set_tm);
-    text_layer_set_text(next_sunset_text_layer, (char*) &next_sunset_buffer);
-  } else {
-    snprintf(next_sunset_buffer, sizeof("N/A"), "N/A");
-    text_layer_set_text(next_sunset_text_layer, (char*) &next_sunset_buffer);
-  }
-
-  if (prev_sunrise_epoch != ZERO) {
-    struct tm *rise_tm = localtime(&prev_sunrise_epoch);
-    strftime(prev_sunrise_buffer, sizeof("00:00"), "%H:%M", rise_tm);
-    text_layer_set_text(prev_sunrise_text_layer, (char*) &prev_sunrise_buffer);
-  } else {
-    snprintf(prev_sunrise_buffer, sizeof("N/A"), "N/A");
-    text_layer_set_text(prev_sunrise_text_layer, (char*) &prev_sunrise_buffer);
-  }
-  
-  if (prev_sunset_epoch != ZERO) {
-    struct tm *set_tm = localtime(&prev_sunset_epoch);
-    strftime(prev_sunset_buffer, sizeof("00:00"), "%H:%M", set_tm);
-    text_layer_set_text(prev_sunset_text_layer, (char*) &prev_sunset_buffer);
-  } else {
-    snprintf(prev_sunset_buffer, sizeof("N/A"), "N/A");
-    text_layer_set_text(prev_sunset_text_layer, (char*) &prev_sunset_buffer);
   }
 }
 
@@ -485,7 +452,13 @@ static void in_received_handler(DictionaryIterator *message, void *context) {
     update_moon_image(now);
     reframe_moon_layer(now);
 
-    // Weather and daylight path
+    // Temperature
+    int temperature = dict_find(message, KEY_TEMPERATURE)->value->int32;
+    snprintf(temp_buffer, sizeof("-123\u00B0"), "%d\u00B0", temperature);
+    text_layer_set_text(temp_text_layer, temp_buffer);
+    temp_time_stamp = time(NULL);
+
+    // Sunrise/set and daylight path
     int incoming_sunrise = dict_find(message, KEY_SUNRISE)->value->int32;
     int incoming_sunset = dict_find(message, KEY_SUNSET)->value->int32;
     assign_rise_or_set_epoch((time_t) incoming_sunrise - timezone_offset, "rise", now);
@@ -520,7 +493,9 @@ static bool data_to_load() {
     persist_exists(KEY_PREV_SUNSET) &&
     persist_exists(KEY_NEXT_SUNSET) &&
     persist_exists(KEY_TIME_STAMP) &&
-    persist_exists(KEY_TZOFFSET)
+    persist_exists(KEY_TZOFFSET) &&
+    persist_exists(KEY_TEMPERATURE) &&
+    persist_exists(KEY_TEMP_TIME_STAMP)
   );
 }
 
@@ -535,6 +510,8 @@ static void save_data() {
     persist_write_int(KEY_NEXT_SUNSET, next_sunset_epoch);
     persist_write_int(KEY_TIME_STAMP, time_stamp);
     persist_write_int(KEY_TZOFFSET, timezone_offset);
+    persist_write_int(KEY_TEMPERATURE, temperature);
+    persist_write_int(KEY_TEMP_TIME_STAMP, temp_time_stamp);
   } else
     APP_LOG(APP_LOG_LEVEL_DEBUG, "PEBBLE: Some values are empty, not saving.");
 }
@@ -553,7 +530,16 @@ static void load_data() {
     update_moon_image(now);
     reframe_moon_layer(now);
 
-    time_stamp  =   (time_t)persist_read_int(KEY_TIME_STAMP);
+    time_stamp = (time_t)persist_read_int(KEY_TIME_STAMP);
+
+    // Update the temperature if less than one hour.
+    temp_time_stamp = (time_t)persist_read_int(KEY_TEMP_TIME_STAMP);
+    int old_temp = (int)persist_read_int(KEY_TEMPERATURE);
+    if (old_temp != -999 && difftime(now, temp_time_stamp) < 3600) {
+      temperature = old_temp;
+      snprintf(temp_buffer, sizeof("-123\u00B0"), "%d\u00B0", temperature);
+      text_layer_set_text(temp_text_layer, temp_buffer);
+    }
 
     // Get rise/set information and update daypath.
     prev_sunrise_epoch = (time_t)persist_read_int(KEY_PREV_SUNRISE);
@@ -568,11 +554,13 @@ static void load_data() {
 
 static void minute_tick_handler(struct tm *tick_time, TimeUnits units_changed) {
   /* Each minute: update clock, move the sun, check weather (if time to), 
-  update moon, update epochs, redraw day path. */
+  update moon, update temp, update epochs, redraw day path. */
   APP_LOG(APP_LOG_LEVEL_DEBUG, "PEBBLE: Tick");
   time_t now = time(NULL);
   strftime(time_buffer, sizeof("00:00"), "%H:%M", tick_time);
   text_layer_set_text(time_text_layer, time_buffer);
+  strftime(date_buffer, sizeof("00-00"), "%m-%d", tick_time);
+  text_layer_set_text(date_text_layer, date_buffer);
 
   reframe_sun_layer(now);
 
@@ -585,6 +573,12 @@ static void minute_tick_handler(struct tm *tick_time, TimeUnits units_changed) {
     reframe_moon_layer(now);
   } else {
     layer_set_hidden(moon_layer, true);
+  }
+
+  if (difftime(now, temp_time_stamp) > 3600) {
+    temperature = -999;
+    snprintf(temp_buffer, sizeof("-123\u00B0"), "--\u00B0");
+    text_layer_set_text(temp_text_layer, temp_buffer);    
   }
 
   update_rise_and_set_epochs(now);
@@ -623,44 +617,15 @@ static void window_load(Window *window) {
   bitmap_layer_set_compositing_mode(b_clockface_layer, GCompOpAnd);
   layer_add_child(background_layer, bitmap_layer_get_layer(b_clockface_layer));
 
-  // Create the sun layer
-  sun_layer = layer_create(GRect(0, 0, SUN_DIAMETER, SUN_DIAMETER));
-  layer_set_frame(sun_layer, GRect(0, 100, SUN_DIAMETER, SUN_DIAMETER));
-  layer_add_child(window_layer, sun_layer);
-
-  b_sun_image = gbitmap_create_with_resource(RESOURCE_ID_SUN_B);
-  b_sun_layer = bitmap_layer_create(GRect(0, 0, SUN_DIAMETER, SUN_DIAMETER));
-  bitmap_layer_set_bitmap(b_sun_layer, b_sun_image);
-  bitmap_layer_set_background_color(b_sun_layer, GColorClear);
-  bitmap_layer_set_compositing_mode(b_sun_layer, GCompOpAnd);
-  layer_add_child(sun_layer, bitmap_layer_get_layer(b_sun_layer));
-
-  w_sun_image = gbitmap_create_with_resource(RESOURCE_ID_SUN_W);
-  w_sun_layer = bitmap_layer_create(GRect(0, 0, SUN_DIAMETER, SUN_DIAMETER));
-  bitmap_layer_set_bitmap(w_sun_layer, w_sun_image);
-  bitmap_layer_set_background_color(w_sun_layer, GColorClear);
-  bitmap_layer_set_compositing_mode(w_sun_layer, GCompOpOr);
-  layer_add_child(sun_layer, bitmap_layer_get_layer(w_sun_layer));
-
-  // Create the moon layer
-  moon_layer = layer_create(GRect(0, 0, MOON_DIAMETER, MOON_DIAMETER));
-  layer_set_frame(moon_layer, GRect(80, 100, MOON_DIAMETER, MOON_DIAMETER));
-  layer_set_hidden(moon_layer, true);
-  layer_add_child(window_layer, moon_layer);
+  // Create the date text layer
+  date_text_layer = init_text_layer(GRect(0, 141, 50, 24), GColorWhite, GColorClear, FONT_KEY_GOTHIC_24_BOLD, GTextAlignmentLeft);
+  text_layer_set_text(date_text_layer, "00-00");
+  layer_add_child(window_layer, (Layer*) date_text_layer);
   
-  // Create the text layers to hold the sunrise and sunset times.
-  next_sunrise_text_layer = init_text_layer(GRect(104, 6, 40, 18), GColorWhite, GColorClear, FONT_KEY_GOTHIC_14_BOLD, GTextAlignmentCenter);
-  text_layer_set_text(next_sunrise_text_layer, "N/A");
-  layer_add_child(window_layer, (Layer*) next_sunrise_text_layer);
-  next_sunset_text_layer = init_text_layer(GRect(104, 148, 40, 18), GColorWhite, GColorClear, FONT_KEY_GOTHIC_14_BOLD, GTextAlignmentCenter);
-  text_layer_set_text(next_sunset_text_layer, "N/A");
-  layer_add_child(window_layer, (Layer*) next_sunset_text_layer);
-  prev_sunrise_text_layer = init_text_layer(GRect(0, 6, 40, 18), GColorWhite, GColorClear, FONT_KEY_GOTHIC_14_BOLD, GTextAlignmentCenter);
-  text_layer_set_text(prev_sunrise_text_layer, "N/A");
-  layer_add_child(window_layer, (Layer*) prev_sunrise_text_layer);
-  prev_sunset_text_layer = init_text_layer(GRect(0, 148, 40, 18), GColorWhite, GColorClear, FONT_KEY_GOTHIC_14_BOLD, GTextAlignmentCenter);
-  text_layer_set_text(prev_sunset_text_layer, "N/A");
-  layer_add_child(window_layer, (Layer*) prev_sunset_text_layer);
+  // Create the temperature text layer
+  temp_text_layer = init_text_layer(GRect(99, -3, 45, 24), GColorWhite, GColorClear, FONT_KEY_GOTHIC_24_BOLD, GTextAlignmentRight);
+  text_layer_set_text(temp_text_layer, "--\u00B0");
+  layer_add_child(window_layer, (Layer*) temp_text_layer);
 
   // Create the notification layer.
   refresh_image = gbitmap_create_with_resource(RESOURCE_ID_REFRESH);
@@ -685,23 +650,40 @@ static void window_load(Window *window) {
   battery_layer = bitmap_layer_create(layer_get_frame(window_layer));
   bitmap_layer_set_background_color(battery_layer, GColorClear);
   layer_add_child(window_layer, bitmap_layer_get_layer(battery_layer));
-  layer_set_frame(bitmap_layer_get_layer(battery_layer), GRect(120, 152, BATT_W, BATT_H));
+  layer_set_frame(bitmap_layer_get_layer(battery_layer), GRect(118, 152, BATT_W, BATT_H));
   layer_set_bounds(bitmap_layer_get_layer(battery_layer), GRect(0, 0, BATT_W, BATT_H));
   battery_handler(battery_state_service_peek());
   
+  // Create the sun layer
+  sun_layer = layer_create(GRect(0, 0, SUN_DIAMETER, SUN_DIAMETER));
+  layer_set_frame(sun_layer, GRect(0, 100, SUN_DIAMETER, SUN_DIAMETER));
+  layer_add_child(window_layer, sun_layer);
+
+  b_sun_image = gbitmap_create_with_resource(RESOURCE_ID_SUN_B);
+  b_sun_layer = bitmap_layer_create(GRect(0, 0, SUN_DIAMETER, SUN_DIAMETER));
+  bitmap_layer_set_bitmap(b_sun_layer, b_sun_image);
+  bitmap_layer_set_background_color(b_sun_layer, GColorClear);
+  bitmap_layer_set_compositing_mode(b_sun_layer, GCompOpAnd);
+  layer_add_child(sun_layer, bitmap_layer_get_layer(b_sun_layer));
+
+  w_sun_image = gbitmap_create_with_resource(RESOURCE_ID_SUN_W);
+  w_sun_layer = bitmap_layer_create(GRect(0, 0, SUN_DIAMETER, SUN_DIAMETER));
+  bitmap_layer_set_bitmap(w_sun_layer, w_sun_image);
+  bitmap_layer_set_background_color(w_sun_layer, GColorClear);
+  bitmap_layer_set_compositing_mode(w_sun_layer, GCompOpOr);
+  layer_add_child(sun_layer, bitmap_layer_get_layer(w_sun_layer));
+
+  // Create the moon layer
+  moon_layer = layer_create(GRect(0, 0, MOON_DIAMETER, MOON_DIAMETER));
+  layer_set_frame(moon_layer, GRect(80, 100, MOON_DIAMETER, MOON_DIAMETER));
+  layer_set_hidden(moon_layer, true);
+  layer_add_child(window_layer, moon_layer);
+
   // Initialize times
   prev_sunrise_epoch = ZERO;
   next_sunrise_epoch = INF;
   prev_sunset_epoch = ZERO;
   next_sunset_epoch = INF;
-
-  // Hide the debug info if not in debug mode.
-  if (!DEBUG_MODE) {
-    layer_set_hidden((Layer*)next_sunrise_text_layer, true);
-    layer_set_hidden((Layer*)prev_sunrise_text_layer, true);
-    layer_set_hidden((Layer*)next_sunset_text_layer, true);
-    layer_set_hidden((Layer*)prev_sunset_text_layer, true);
-  }
 
   // Load data from persistent storage
   load_data();
@@ -719,10 +701,8 @@ static void window_unload(Window *window) {
 
   // Destroy TextLayers.
   text_layer_destroy(time_text_layer);
-  text_layer_destroy(next_sunrise_text_layer);
-  text_layer_destroy(next_sunset_text_layer);
-  text_layer_destroy(prev_sunrise_text_layer);
-  text_layer_destroy(prev_sunset_text_layer);
+  text_layer_destroy(date_text_layer);
+  text_layer_destroy(temp_text_layer);
 
   // Destroy GBitmaps.
   gbitmap_destroy(b_sun_image);
