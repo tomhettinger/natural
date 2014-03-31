@@ -110,12 +110,12 @@ static void battery_handler(BatteryChargeState charge_state) {
   } else {
     int percentage = charge_state.charge_percent;
     snprintf(log_buffer, 32, "PEBBLE: %d charged", percentage);
-    if (percentage >= 90) bitmap_layer_set_bitmap(battery_layer, batt_100_image);
-    else if (percentage < 80 && percentage >= 60) bitmap_layer_set_bitmap(battery_layer, batt_80_image);
-    else if (percentage < 60 && percentage >= 40) bitmap_layer_set_bitmap(battery_layer, batt_60_image);
-    else if (percentage < 40 && percentage >= 20) bitmap_layer_set_bitmap(battery_layer, batt_40_image);
-    else if (percentage < 20 && percentage >= 10) bitmap_layer_set_bitmap(battery_layer, batt_20_image);
-    else if (percentage < 10) bitmap_layer_set_bitmap(battery_layer, batt_10_image);
+    if (percentage > 80) bitmap_layer_set_bitmap(battery_layer, batt_100_image);
+    else if (percentage <= 80 && percentage > 60) bitmap_layer_set_bitmap(battery_layer, batt_80_image);
+    else if (percentage <= 60 && percentage > 40) bitmap_layer_set_bitmap(battery_layer, batt_60_image);
+    else if (percentage <= 40 && percentage > 20) bitmap_layer_set_bitmap(battery_layer, batt_40_image);
+    else if (percentage <= 20 && percentage > 10) bitmap_layer_set_bitmap(battery_layer, batt_20_image);
+    else if (percentage <= 10) bitmap_layer_set_bitmap(battery_layer, batt_10_image);
   }
   APP_LOG(APP_LOG_LEVEL_DEBUG, log_buffer);
 }
