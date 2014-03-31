@@ -44,6 +44,7 @@ function locationSuccess(location) {
             // If text is in JSON format
             if (isJSON(req.responseText)) {
                 console.log("JS: Parsing text...");
+                console.log(req.responseText);
                 try {
                     var response = JSON.parse(req.responseText);
                 } 

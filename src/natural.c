@@ -453,7 +453,7 @@ static void in_received_handler(DictionaryIterator *message, void *context) {
     reframe_moon_layer(now);
 
     // Temperature
-    int temperature = dict_find(message, KEY_TEMPERATURE)->value->int32;
+    temperature = dict_find(message, KEY_TEMPERATURE)->value->int32;
     snprintf(temp_buffer, sizeof("-123\u00B0"), "%d\u00B0", temperature);
     text_layer_set_text(temp_text_layer, temp_buffer);
     temp_time_stamp = time(NULL);
@@ -534,12 +534,7 @@ static void load_data() {
 
     // Update the temperature if less than one hour.
     temp_time_stamp = (time_t)persist_read_int(KEY_TEMP_TIME_STAMP);
-    int old_temp = (int)persist_read_int(KEY_TEMPERATURE);
-    if (old_temp != -999 && difftime(now, temp_time_stamp) < 3600) {
-      temperature = old_temp;
-      snprintf(temp_buffer, sizeof("-123\u00B0"), "%d\u00B0", temperature);
-      text_layer_set_text(temp_text_layer, temp_buffer);
-    }
+    temperature = (int)persist_read_int(KEY_TEMPERATURE);
 
     // Get rise/set information and update daypath.
     prev_sunrise_epoch = (time_t)persist_read_int(KEY_PREV_SUNRISE);
@@ -577,9 +572,15 @@ static void minute_tick_handler(struct tm *tick_time, TimeUnits units_changed) {
 
   if (difftime(now, temp_time_stamp) > 3600) {
     temperature = -999;
-    snprintf(temp_buffer, sizeof("-123\u00B0"), "--\u00B0");
-    text_layer_set_text(temp_text_layer, temp_buffer);    
+    APP_LOG(APP_LOG_LEVEL_DEBUG, "PEBBLE: now-temp_time_stamp > 3600. Setting temp to -999.");
   }
+  if (temperature == -999) {
+    snprintf(temp_buffer, sizeof("-123\u00B0"), "--\u00B0");
+    APP_LOG(APP_LOG_LEVEL_DEBUG, "PEBBLE: at tick, temp=-999");
+  } else {
+    snprintf(temp_buffer, sizeof("-123\u00B0"), "%d\u00B0", temperature);
+  }
+  text_layer_set_text(temp_text_layer, temp_buffer);  
 
   update_rise_and_set_epochs(now);
   layer_mark_dirty(daylight_layer);
@@ -605,11 +606,6 @@ static void window_load(Window *window) {
   layer_set_update_proc(daylight_layer, daylight_update_proc);
   layer_add_child(background_layer, daylight_layer);
 
-  // Create the text layer to hold the current time.
-  time_text_layer = init_text_layer(GRect(44, 42, 60, 29), GColorBlack, GColorWhite, FONT_KEY_GOTHIC_28_BOLD, GTextAlignmentCenter);
-  text_layer_set_text(time_text_layer, "N/A");
-  layer_add_child(background_layer, (Layer*) time_text_layer);
-
   b_clockface_image = gbitmap_create_with_resource(RESOURCE_ID_CLOCKFACE_B);
   b_clockface_layer = bitmap_layer_create(bounds);
   bitmap_layer_set_bitmap(b_clockface_layer, b_clockface_image);
@@ -624,7 +620,6 @@ static void window_load(Window *window) {
   
   // Create the temperature text layer
   temp_text_layer = init_text_layer(GRect(99, -3, 45, 24), GColorWhite, GColorClear, FONT_KEY_GOTHIC_24_BOLD, GTextAlignmentRight);
-  text_layer_set_text(temp_text_layer, "--\u00B0");
   layer_add_child(window_layer, (Layer*) temp_text_layer);
 
   // Create the notification layer.
@@ -678,6 +673,11 @@ static void window_load(Window *window) {
   layer_set_frame(moon_layer, GRect(80, 100, MOON_DIAMETER, MOON_DIAMETER));
   layer_set_hidden(moon_layer, true);
   layer_add_child(window_layer, moon_layer);
+
+  // Create the time text layer.
+  time_text_layer = init_text_layer(GRect(30, 35, 84, 28), GColorBlack, GColorWhite, FONT_KEY_DROID_SERIF_28_BOLD, GTextAlignmentCenter);
+  text_layer_set_text(time_text_layer, "N/A");
+  layer_add_child(background_layer, (Layer*) time_text_layer);
 
   // Initialize times
   prev_sunrise_epoch = ZERO;
