@@ -51,16 +51,17 @@ static GBitmap *b_moon_image, *w_moon_image;
 
 static BitmapLayer *noti_layer;
 static GBitmap *refresh_image, *error_image, *empty_image, *no_bluetooth_image;
+
 static BitmapLayer *battery_layer;
 static GBitmap *batt_100_image, *batt_80_image, *batt_60_image, *batt_40_image, *batt_20_image, *batt_10_image, *batt_charge_image;
 
 static TextLayer *time_text_layer, *date_text_layer, *temp_text_layer;
 
 static char time_buffer[16], date_buffer[16], temp_buffer[16], log_buffer[256];
-
 static int current_image_index[2] = {99, 99};       // points to nothing
 static int timezone_offset = 0;                     // actual epoch - time(NULL)
-static int temperature = -999;                      // current temp
+static int temperature = -999;                      // current temp in celsius
+static int cityID = -999;                           // identifier for city from openweathermap
 static bool timezone_missing = true;                // necessary? for moon_update maybe
 static bool getting_weather = false;                // prevent calling get_weather() twice
 static bool js_ready = false;                       // js ready to receive requests
@@ -75,12 +76,13 @@ enum {
   KEY_SUNRISE = 2,
   KEY_SUNSET = 3,
   KEY_TEMPERATURE = 4,
-  KEY_PREV_SUNRISE = 5,
-  KEY_PREV_SUNSET = 6,
-  KEY_NEXT_SUNRISE = 7,
-  KEY_NEXT_SUNSET = 8,
-  KEY_TIME_STAMP = 9,
-  KEY_TEMP_TIME_STAMP = 10
+  KEY_CITYID = 5,
+  KEY_PREV_SUNRISE = 20,
+  KEY_PREV_SUNSET = 21,
+  KEY_NEXT_SUNRISE = 22,
+  KEY_NEXT_SUNSET = 23,
+  KEY_TIME_STAMP = 24,
+  KEY_TEMP_TIME_STAMP = 25
 };
 
 
@@ -446,6 +448,18 @@ static void in_received_handler(DictionaryIterator *message, void *context) {
     getting_weather = false;
     bitmap_layer_set_bitmap(noti_layer, empty_image);
 
+    // Location
+    int new_cityID = dict_find(message, KEY_CITYID)->value->int32;
+    if (new_cityID != cityID && cityID != -999) {
+      prev_sunrise_epoch = ZERO;
+      next_sunrise_epoch = INF;
+      prev_sunset_epoch = ZERO;
+      next_sunset_epoch = INF;
+    }
+    cityID = new_cityID;
+    snprintf(log_buffer, 128, "id=%d", cityID);
+    APP_LOG(APP_LOG_LEVEL_DEBUG, log_buffer);
+
     // Timezone offset and moon
     timezone_offset = dict_find(message, KEY_TZOFFSET)->value->int32;
     timezone_missing = false;
@@ -495,7 +509,8 @@ static bool data_to_load() {
     persist_exists(KEY_TIME_STAMP) &&
     persist_exists(KEY_TZOFFSET) &&
     persist_exists(KEY_TEMPERATURE) &&
-    persist_exists(KEY_TEMP_TIME_STAMP)
+    persist_exists(KEY_TEMP_TIME_STAMP) &&
+    persist_exists(KEY_CITYID)
   );
 }
 
@@ -512,6 +527,7 @@ static void save_data() {
     persist_write_int(KEY_TZOFFSET, timezone_offset);
     persist_write_int(KEY_TEMPERATURE, temperature);
     persist_write_int(KEY_TEMP_TIME_STAMP, temp_time_stamp);
+    persist_write_int(KEY_CITYID, cityID);
   } else
     APP_LOG(APP_LOG_LEVEL_DEBUG, "PEBBLE: Some values are empty, not saving.");
 }
@@ -523,6 +539,8 @@ static void load_data() {
   if(data_to_load()) {
     time_t now = time(NULL);
     APP_LOG(APP_LOG_LEVEL_DEBUG, "PEBBLE: Loading data from persistent storage.");
+
+    cityID = (int)persist_read_int(KEY_CITYID);
 
     // Get timezone and update moon.
     timezone_offset = (int)persist_read_int(KEY_TZOFFSET);
@@ -570,13 +588,9 @@ static void minute_tick_handler(struct tm *tick_time, TimeUnits units_changed) {
     layer_set_hidden(moon_layer, true);
   }
 
-  if (difftime(now, temp_time_stamp) > 3600) {
-    temperature = -999;
-    APP_LOG(APP_LOG_LEVEL_DEBUG, "PEBBLE: now-temp_time_stamp > 3600. Setting temp to -999.");
-  }
+  if (difftime(now, temp_time_stamp) > 3600) temperature = -999;
   if (temperature == -999) {
     snprintf(temp_buffer, sizeof("-123\u00B0"), "--\u00B0");
-    APP_LOG(APP_LOG_LEVEL_DEBUG, "PEBBLE: at tick, temp=-999");
   } else {
     snprintf(temp_buffer, sizeof("-123\u00B0"), "%d\u00B0", temperature);
   }
@@ -754,7 +768,7 @@ static void init(void) {
   app_message_register_inbox_dropped(in_dropped_handler);
   app_message_register_outbox_failed(out_failed_handler);
   app_message_register_outbox_sent(out_sent_handler);
-  app_message_open(256, 256);  // Large input and output buffer sizes
+  app_message_open(512, 512);  // Large input and output buffer sizes
 
   // Subscribe to 'minute' events and 'bluetooth' events.
   tick_timer_service_subscribe(MINUTE_UNIT, (TickHandler) minute_tick_handler);

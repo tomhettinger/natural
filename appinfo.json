@@ -14,7 +14,8 @@
     "tzOffset": 1,
     "sunrise": 2,
     "sunset": 3,
-    "temperature": 4
+    "temperature": 4,
+    "cityID": 5
   },
   "resources": {
     "media": [

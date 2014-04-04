@@ -56,8 +56,18 @@ function locationSuccess(location) {
                 var temperature = Math.round(response.main.temp - 273.15);
                 var sunrise = response.sys.sunrise;
                 var sunset = response.sys.sunset;
+                var cityID = response.id;
                 console.log("JS: Sending weather...");
-                Pebble.sendAppMessage( {"status": "reporting", "sunrise": sunrise, "sunset": sunset, "temperature": temperature, "tzOffset": tzOffset} );
+                var message = ["reporting", sunrise, sunset, temperature, tzOffset, cityID]
+                console.log(message.toString());
+                Pebble.sendAppMessage({
+                    "status": "reporting", 
+                    "sunrise": sunrise, 
+                    "sunset": sunset, 
+                    "temperature": temperature, 
+                    "tzOffset": tzOffset,
+                    "cityID": cityID
+                });
             }
 
             else {
