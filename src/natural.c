@@ -341,20 +341,29 @@ static void update_moon_image(time_t now) {
   // Determine which image_type to use.
   double phase = calc_moon_phase(now);
   int img_type = (int) ((phase + 0.0625) / 0.125);
-  if (img_type == 8) {img_type = 0;}
+  if (img_type == 8) img_type = 0;
 
   // Determine which image_rotation to use.
   struct tm *now_cal = localtime(&now);
   int h = now_cal->tm_hour;
   int m = now_cal->tm_min;
+  int month = now_cal->tm_mon;
+  int day = now_cal->tm_mday;
   double hour = h + (m / 60.0);
   double rotation = hour / 24.0;
   rotation = rotation - (int)rotation;
   int img_rotation = (int) ((rotation+0.0625) / 0.125);
-  if (img_rotation == 8) {img_rotation = 0;}
+  if (img_rotation == 8) img_rotation = 0;
  
-  // If we need it, load in a new image.
+  // Easter Egg
+  if (month == 4 && day == 4) {
+    img_type = 8;
+    img_rotation = 0;
+  }
+
   int new_image_index[2] = {img_type, img_rotation};
+
+  // If we need it, load in a new image.
   if (new_image_index[0] != current_image_index[0] || new_image_index[1] != current_image_index[1]) {
     current_image_index[0] = new_image_index[0];
     current_image_index[1] = new_image_index[1];
@@ -496,6 +505,7 @@ static void in_received_handler(DictionaryIterator *message, void *context) {
     time_stamp = time(NULL) - (TIMEOUT - ERROR_TIMEOUT);
   }
 }
+
 
 
 /*  OTHER

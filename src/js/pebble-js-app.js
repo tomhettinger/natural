@@ -108,6 +108,18 @@ function receivedHandler(message) {
     }
 }
 
+function showConfigurationHandler() {
+    console.log("showing configuration");
+    Pebble.openURL('http://assets.getpebble.com.s3-website-us-east-1.amazonaws.com/pebble-js/configurable.html');  
+}
+
+function webviewclosedHandler(e) {
+    console.log("configuration closed");
+    var options = JSON.parse(decodeURIComponent(e.response));
+    console.log("Options = " + JSON.stringify(options));
+}
 
 Pebble.addEventListener("ready", readyHandler);
 Pebble.addEventListener("appmessage", receivedHandler);
+Pebble.addEventListener("showConfiguration", showConfigurationHandler);
+Pebble.addEventListener("webviewclosed", webviewclosedHandler);
