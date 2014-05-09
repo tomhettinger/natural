@@ -65,9 +65,9 @@
     <script>
       function saveOptions() {
         var options = {
-          'time': $("#time").val(),
-          'temperature': $("#temperature").val(),
-          'date': $("#date").val()
+          'time' : $('input:radio[name=time]:checked').val(),
+          'temperature' : $('input:radio[name=temperature]:checked').val(),
+          'date' : $('input:radio[name=date]:checked').val()
         }
         return options;
       }
