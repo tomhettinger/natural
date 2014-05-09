@@ -110,7 +110,8 @@ function receivedHandler(message) {
 
 function showConfigurationHandler() {
     console.log("showing configuration");
-    Pebble.openURL('http://assets.getpebble.com.s3-website-us-east-1.amazonaws.com/pebble-js/configurable.html');  
+    //Pebble.openURL('http://assets.getpebble.com.s3-website-us-east-1.amazonaws.com/pebble-js/configurable.html');
+    Pebble.openURL('http://tomhettinger.github.com/natural/index.html');
 }
 
 function webviewclosedHandler(e) {

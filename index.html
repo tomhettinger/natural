@@ -1,70 +1,73 @@
 <!DOCTYPE html>
 <html>
+
+
   <head>
-    <title>Configurable</title>
+    <title>Natural App Config</title>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <link rel="stylesheet" href="http://code.jquery.com/mobile/1.3.2/jquery.mobile-1.3.2.min.css" />
     <script src="http://code.jquery.com/jquery-1.9.1.min.js"></script>
     <script src="http://code.jquery.com/mobile/1.3.2/jquery.mobile-1.3.2.min.js"></script>
   </head>
+
+
   <body>
     <div data-role="page" id="main">
+
       <div data-role="header" class="jqm-header">
-        <h1>Natural App Configuration</h1>
+        <h1>Natural App Config</h1>
       </div>
+
 
       <div data-role="content">
 
         <div data-role="fieldcontain">
-          <label for="name">Name:</label>
-          <textarea cols="40" rows="8" name="name" id="name"></textarea>
-        </div>
-
-        <div data-role="fieldcontain">
-          <label for="special-feature">Activate special feature:</label>
-          <select name="special-feature" id="special-feature" data-role="slider">
-            <option value="off">Off</option>
-            <option value="on">On</option>
-          </select>
+          <fieldset data-role="controlgroup">
+          <legend>Time Format:</legend>
+            <label for="twelve">12-Hour</label>
+            <input type="radio" name="time" id="twelve" value="twelve" checked>
+            <label for="twentyfour">24-Hour</label>
+            <input type="radio" name="time" id="twentyfour" value="twentyfour"> 
+          </fieldset>
         </div>
 
         <div data-role="fieldcontain">
           <fieldset data-role="controlgroup">
-            <legend>Choose as many snacks as you'd like:</legend>
-            <input type="checkbox" name="checkbox-cheetos" id="checkbox-cheetos" class="custom" />
-            <label for="checkbox-cheetos">Cheetos</label>
+          <legend>Temperature Unit:</legend>
+            <label for="fahrenheit">F</label>
+            <input type="radio" name="temperature" id="fahrenheit" value="fahrenheit" checked>
+            <label for="celsius">C</label>
+            <input type="radio" name="temperature" id="celsius" value="celsius"> 
+          </fieldset>
+        </div>        
 
-            <input type="checkbox" name="checkbox-doritos" id="checkbox-doritos" class="custom" />
-            <label for="checkbox-doritos">Doritos</label>
-
-            <input type="checkbox" name="checkbox-fritos" id="checkbox-fritos" class="custom" />
-            <label for="checkbox-fritos">Fritos</label>
-
-            <input type="checkbox" name="checkbox-sunchips" id="checkbox-sunchips" class="custom" />
-            <label for="checkbox-sunchips">Sun Chips</label>
-            </fieldset>
-          </div>
+        <div data-role="fieldcontain">
+          <fieldset data-role="controlgroup">
+          <legend>Date Format:</legend>
+            <label for="mmdd">MM-DD</label>
+            <input type="radio" name="date" id="mmdd" value="mmdd" checked>
+            <label for="ddmm">DD-MM</label>
+            <input type="radio" name="date" id="ddmm" value="ddmm"> 
+          </fieldset>
         </div>
 
         <div class="ui-body ui-body-b">
           <fieldset class="ui-grid-a">
               <div class="ui-block-a"><button type="submit" data-theme="d" id="b-cancel">Cancel</button></div>
-              <div class="ui-block-b"><button type="submit" data-theme="a" id="b-submit">Submit</button></div>
+              <div class="ui-block-b"><button type="submit" data-theme="a" id="b-submit">Save</button></div>
             </fieldset>
           </div>
         </div>
       </div>
     </div>
+
     <script>
       function saveOptions() {
         var options = {
-          'name': $("#name").val(),
-          'special-feature': $("#special-feature").val(),
-          'checkbox-cheetos': $("#checkbox-cheetos").is(':checked'),
-          'checkbox-doritos': $("#checkbox-doritos").is(':checked'),
-          'checkbox-fritos': $("#checkbox-fritos").is(':checked'),
-          'checkbox-sunchips': $("#checkbox-sunchips").is(':checked')
+          'time': $("#time").val(),
+          'temperature': $("#temperature").val(),
+          'date': $("#date").val()
         }
         return options;
       }
@@ -86,5 +89,7 @@
 
       });
     </script>
+
   </body>
+
 </html>
