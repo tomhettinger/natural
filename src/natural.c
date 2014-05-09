@@ -77,6 +77,9 @@ enum {
   KEY_SUNSET = 3,
   KEY_TEMPERATURE = 4,
   KEY_CITYID = 5,
+  KEY_TIMEFORMAT = 6,
+  KEY_TEMPFORMAT = 7,
+  KEY_DATEFORMAT = 8,
   KEY_PREV_SUNRISE = 20,
   KEY_PREV_SUNSET = 21,
   KEY_NEXT_SUNRISE = 22,
@@ -503,6 +506,17 @@ static void in_received_handler(DictionaryIterator *message, void *context) {
     reframe_moon_layer(now);
 
     time_stamp = time(NULL) - (TIMEOUT - ERROR_TIMEOUT);
+  }
+
+  else if(strcmp(status, "configuration") == 0) {
+    APP_LOG(APP_LOG_LEVEL_DEBUG, "PEBBLE: Recieved status \"configuration\"");
+    char *timeFormat = (char*)dict_find(message, KEY_TIMEFORMAT)->value;
+    if(strcmp(timeFormat, "twelve") == 0) {
+      APP_LOG(APP_LOG_LEVEL_DEBUG, "PEBBLE: 12-h format.");
+    }
+    else {
+      APP_LOG(APP_LOG_LEVEL_DEBUG, "PEBBLE: 24-h format.");
+    }
   }
 }
 

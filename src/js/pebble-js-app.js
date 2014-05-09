@@ -1,6 +1,15 @@
 var locationOptions = { "timeout": 15000, "maximumAge": 60000 };  // Wait 15s for pos to return. Cache pos for 60s.
 
 
+function isEmptyObject(obj) {
+    var name;
+    for (name in obj) {
+        return false;
+    }
+    return true;
+}
+
+
 function isJSON(text) {
     return (/^[\],:{}\s]*$/.test(text.replace(/\\["\\\/bfnrtu]/g, '@').
     replace(/"[^"\\\n\r]*"|true|false|null|-?\d+(?:\.\d*)?(?:[eE][+\-]?\d+)?/g, ']').
@@ -108,17 +117,30 @@ function receivedHandler(message) {
     }
 }
 
+
 function showConfigurationHandler() {
     console.log("showing configuration");
-    //Pebble.openURL('http://assets.getpebble.com.s3-website-us-east-1.amazonaws.com/pebble-js/configurable.html');
     Pebble.openURL('http://tomhettinger.github.com/natural/index.html');
 }
+
 
 function webviewclosedHandler(e) {
     console.log("configuration closed");
     var options = JSON.parse(decodeURIComponent(e.response));
-    console.log("Options = " + JSON.stringify(options));
+    if (isEmptyObject(options)) {
+        console.log("No options from config page.");
+    }
+    else {
+        console.log("Options = " + JSON.stringify(options));
+        Pebble.sendAppMessage({
+            "status": "configuration",
+            "timeFormat": options.timeFormat,
+            "tempFormat": options.tempFormat,
+            "dateFormat": options.dateFormat
+        });
+    }
 }
+
 
 Pebble.addEventListener("ready", readyHandler);
 Pebble.addEventListener("appmessage", receivedHandler);
