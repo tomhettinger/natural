@@ -53,7 +53,7 @@ function locationSuccess(location) {
                     Pebble.sendAppMessage( {"status": "failed", "tzOffset": tzOffset} );
                     return;
                 }
-                var temperature = Math.round(response.main.temp - 273.15);
+                var temperature = Math.round((response.main.temp-273.15)*1.8 + 32.0);
                 var sunrise = response.sys.sunrise;
                 var sunset = response.sys.sunset;
                 var cityID = response.id;

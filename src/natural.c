@@ -60,7 +60,7 @@ static TextLayer *time_text_layer, *date_text_layer, *temp_text_layer;
 static char time_buffer[16], date_buffer[16], temp_buffer[16], log_buffer[256];
 static int current_image_index[2] = {99, 99};       // points to nothing
 static int timezone_offset = 0;                     // actual epoch - time(NULL)
-static int temperature = -999;                      // current temp in celsius
+static int temperature = -999;                      // current temp in fahrenheiht
 static int cityID = -999;                           // identifier for city from openweathermap
 static bool timezone_missing = true;                // necessary? for moon_update maybe
 static bool getting_weather = false;                // prevent calling get_weather() twice
