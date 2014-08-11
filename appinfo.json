@@ -5,7 +5,7 @@
   "companyName": "Thomas Hettinger",
   "versionCode": 8,
   "versionLabel": "0.8.0",
-  "capabilities": [ "configurable", "location" ],
+  "capabilities": [ "location" ],
   "watchapp": {
     "watchface": true
   },
