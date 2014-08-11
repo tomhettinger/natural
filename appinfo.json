@@ -15,10 +15,7 @@
     "sunrise": 2,
     "sunset": 3,
     "temperature": 4,
-    "cityID": 5,
-    "timeFormat": 6,
-    "tempFormat": 7,
-    "dateFormat": 8
+    "cityID": 5
   },
   "resources": {
     "media": [
