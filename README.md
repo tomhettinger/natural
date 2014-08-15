@@ -7,3 +7,5 @@
 
 ## Installation
 The app has been published with Pebble.  Simply search for 'natural' as a watchface in the Pebble app store.
+
+https://apps.getpebble.com/applications/53e92b66d145e76860000069
