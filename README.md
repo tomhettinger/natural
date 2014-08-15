@@ -1,4 +1,4 @@
-![screenshot](https://raw.githubusercontent.com/tomhettinger/natural/master/resources/images/pebble-screenshot_2014-08-15_11-15-18.png)]
+![screenshot](https://raw.githubusercontent.com/tomhettinger/natural/master/resources/images/pebble-screenshot_2014-08-15_11-15-18.png)
 
 
 ## Introduction
