@@ -3,8 +3,8 @@
   "shortName": "natural",
   "longName": "natural",
   "companyName": "Thomas Hettinger",
-  "versionCode": 10,
-  "versionLabel": "1.0.0",
+  "versionCode" : "11",
+  "versionLabel": "1.1",
   "capabilities": [ "location" ],
   "watchapp": {
     "watchface": true
