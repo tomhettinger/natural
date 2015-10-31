@@ -29,7 +29,7 @@ function transferCanceled(evt) {
 function locationSuccess(location) {
     var tzOffset = new Date().getTimezoneOffset() * 60;
     var req = new XMLHttpRequest();
-    var url = "http://api.openweathermap.org/data/2.5/weather?" + "lat=" + location.coords.latitude + "&lon=" + location.coords.longitude + "&cnt=1";
+    var url = "http://api.openweathermap.org/data/2.5/weather?" + "lat=" + location.coords.latitude + "&lon=" + location.coords.longitude + "&cnt=1" + "&APPID=fbe9f05dbefbee75e2ffdcf3b069a893";
     req.ontimeout = function(e) {console.log("JS: Timeout on httprequest.");}
     req.addEventListener("progress", updateProgress, false);
     req.addEventListener("error", transferFailed, false);
